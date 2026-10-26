@@ -55,6 +55,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
     'chat',
     'read_chat',
     'read_messages',
+    'read_module_state',
     'wait_for_event',
   ])
   for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
@@ -308,6 +309,39 @@ test('goto room moves the class tab and waits for it', async () => {
 
   const unknown = await tool('goto', { room: 'Room 9' })
   assert.equal(unknown.isError, true)
+  assert.match(unknown.content[0].text, /no room Room 9; rooms: Lobby, Room 1/)
+  tab.close()
+})
+
+test('read_module_state asks the class tab and returns its reply', async () => {
+  const tab = await openClassTab(await base())
+  await tab.report(classIn('Lobby'))
+
+  // the tab's own room unless one is named
+  const asked = (event) =>
+    (async () => {
+      for (let i = 0; i < 50; i++) {
+        const command = tab.commands.find((c) => c.event === event && !c.answered)
+        if (command) return Object.assign(command, { answered: true })
+        await new Promise((r) => setTimeout(r, 20))
+      }
+    })()
+
+  const own = tool('read_module_state')
+  const first = await asked('read-state')
+  assert.equal(first.data.room, 'Lobby')
+  await tab.report({ type: 'reply', id: first.data.id, value: { room: 'Lobby', state: { code: 'print(1)' } } })
+  assert.deepEqual((await own).value, { room: 'Lobby', state: { code: 'print(1)' } })
+
+  const missing = tool('read_module_state', { room: 'Room 1', key: 'nope' })
+  const second = await asked('read-state')
+  assert.deepEqual({ ...second.data, id: undefined }, { id: undefined, room: 'Room 1', key: 'nope' })
+  await tab.report({ type: 'reply', id: second.data.id, error: 'no key nope in Room 1; keys: code' })
+  const failed = await missing
+  assert.equal(failed.isError, true)
+  assert.match(failed.content[0].text, /no key nope/)
+
+  const unknown = await tool('read_module_state', { room: 'Room 9' })
   assert.match(unknown.content[0].text, /no room Room 9; rooms: Lobby, Room 1/)
   tab.close()
 })

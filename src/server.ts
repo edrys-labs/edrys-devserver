@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -79,6 +80,11 @@ export type DevServer = {
   state(): { connected: boolean; share: string | null; class: ClassState | null }
   /** A command to the owner tab's DevBridge, e.g. goto {room}. */
   send(event: string, data: object): void
+  /**
+   * A question to the owner tab's DevBridge, e.g. read-state {room}: resolves
+   * with its reply's value, rejects with its error or after `ms`.
+   */
+  request(event: string, data: object, ms?: number): Promise<any>
   /** The local modules folder and the address it is served at, if any. */
   modules: { dir: string; url: string } | null
   /** Module messages and errors, oldest first; `dropped` messages the tab skipped. */
@@ -165,9 +171,17 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     req.on('close', () => others.delete(res))
   })
 
-  app.post('/edrys-dev/bridge', express.json(), (req, res) => {
+  // questions to the owner tab, by id, until it replies
+  const pending = new Map<string, (reply: Report) => void>()
+
+  // a reply carries a room's whole state
+  app.post('/edrys-dev/bridge', express.json({ limit: '2mb' }), (req, res) => {
     if (!sameOrigin(req)) return res.sendStatus(403)
     const report: Report = req.body
+    if (report.type === 'reply') {
+      pending.get(report.id)?.(report)
+      return res.sendStatus(204)
+    }
     if (report.type === 'open' && typeof report.url === 'string') share = report.url
     if (report.type === 'class') {
       const { type, ...state } = report
@@ -221,6 +235,22 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const send = (event: string, data: object) => {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
   }
+  const request = (event: string, data: object, ms = 5000) =>
+    new Promise<any>((resolve, reject) => {
+      if (!clients.size) return reject(new Error('the class tab is not open'))
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        pending.delete(id)
+        reject(new Error(`the class tab did not answer within ${ms / 1000} s`))
+      }, ms)
+      pending.set(id, (reply) => {
+        clearTimeout(timer)
+        pending.delete(id)
+        if (reply.error !== undefined) reject(new Error(String(reply.error)))
+        else resolve(reply.value)
+      })
+      send(event, { id, ...data })
+    })
   const stopWatching = watchFile(options.lab, () => send('reload-lab', {}))
 
   const port = await listen(server, options.port, options.host)
@@ -256,6 +286,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     chat,
     state: () => ({ connected: clients.size > 0, share, class: classState }),
     send,
+    request,
     modules,
     log: () => ({ entries: log, dropped }),
     async close() {

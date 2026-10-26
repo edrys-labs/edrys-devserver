@@ -99,6 +99,18 @@ const TOOLS = [
     },
   },
   {
+    name: 'read_module_state',
+    description:
+      'The state the modules share in a room (what they keep with Edrys.getState / setState), as the class tab sees it: {room, state}. state maps each key a module chose to its value as JSON: a Text as a string, a Map as an object, binary data as {binary: size}; strings are cut at 1000 characters, marked …(length). key returns that one value, cut at 50000 instead: {room, key, value}. room defaults to the class tab\'s own room (get_state.class.room); any key of get_state.class.rooms works, also one nobody is in. Read only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        room: { type: 'string', description: 'e.g. "Room 1", "Lobby" or "Station xyz"' },
+        key: { type: 'string' },
+      },
+    },
+  },
+  {
     name: 'wait_for_event',
     description:
       'Returns the next queued browser event, or {timeout: true}. timeout_s: 0 polls without blocking. Polling does not wake an idle agent; call it between work steps.',
@@ -415,6 +427,19 @@ export function startMcp(server: DevServer, options: McpOptions) {
     return { dropped, skipped: Math.max(0, matching.length - last), entries: matching.slice(-last) }
   }
 
+  async function readModuleState(args: any) {
+    for (const key of ['room', 'key'] as const) {
+      if (args[key] !== undefined && typeof args[key] !== 'string') throw new Error(key + ' must be a string')
+    }
+    const { connected, class: state } = server.state()
+    if (!connected || !state) throw new Error(`the class tab is not open: ${options.url}`)
+    const room = args.room ?? state.room
+    if (!Object.hasOwn(state.rooms, room)) {
+      throw new Error(`no room ${room}; rooms: ${Object.keys(state.rooms).join(', ')}`)
+    }
+    return server.request('read-state', { room, ...(args.key !== undefined ? { key: args.key } : {}) })
+  }
+
   function readChat(args: any) {
     const last = args.last === undefined ? 50 : args.last
     if (!Number.isInteger(last) || last < 1) throw new Error('last must be an integer >= 1')
@@ -456,6 +481,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
     chat: sendChat,
     read_chat: readChat,
     read_messages: readMessages,
+    read_module_state: readModuleState,
     wait_for_event: waitForEvent,
   }
 
