@@ -259,7 +259,11 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   let stopModules = async () => {}
   if (options.modules) {
     const dir = options.modules
-    const moduleServer = http.createServer(moduleApp(dir, `http://localhost:${port}/edrys-dev/module-error`))
+    // the class tab may use either local address
+    const pageOrigins = [...new Set(['localhost', '127.0.0.1', options.host].map((host) => `http://${host}:${port}`))]
+    const moduleServer = http.createServer(
+      moduleApp(dir, `http://localhost:${port}/edrys-dev/module-error`, pageOrigins)
+    )
     const modulePort = await listen(moduleServer, port + 1, options.host)
     modules = { dir, url: `http://localhost:${modulePort}/` }
     moduleOrigins = [`http://localhost:${modulePort}`, `http://127.0.0.1:${modulePort}`, 'null']

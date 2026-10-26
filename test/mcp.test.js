@@ -26,6 +26,8 @@ async function tool(name, args = {}) {
 
 before(async () => {
   fs.writeFileSync(lab, 'name: One\n')
+  // local modules, served on the next port (3271)
+  fs.mkdirSync(path.join(dir, 'modules'))
   agent = spawn(process.execPath, ['dist/index.js', lab, '--mcp', '-p', '3270'], { stdio: ['pipe', 'pipe', 'pipe'] })
   lines = readline.createInterface({ input: agent.stdout })
   lines.on('line', (line) => {
@@ -56,6 +58,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
     'read_chat',
     'read_messages',
     'read_module_state',
+    'run_in_module',
     'wait_for_event',
   ])
   for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
@@ -343,6 +346,38 @@ test('read_module_state asks the class tab and returns its reply', async () => {
 
   const unknown = await tool('read_module_state', { room: 'Room 9' })
   assert.match(unknown.content[0].text, /no room Room 9; rooms: Lobby, Room 1/)
+  tab.close()
+})
+
+test('run_in_module runs code in a local module of the class tab', async () => {
+  const tab = await openClassTab(await base())
+  await tab.report({
+    ...classIn('Lobby'),
+    modules: [
+      { name: 'Term', url: 'http://127.0.0.1:3271/term/' },
+      { name: 'Markdown', url: 'https://edrys-labs.github.io/module-markdown-it/index.html' },
+    ],
+  })
+
+  const ran = tool('run_in_module', { module: 'Term', code: 'document.title' })
+  let command
+  for (let i = 0; i < 50 && !(command = tab.commands.find((c) => c.event === 'run-module')); i++) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  assert.deepEqual({ ...command.data, id: undefined }, {
+    id: undefined,
+    url: 'http://127.0.0.1:3271/term/',
+    code: 'document.title',
+    ms: 10000,
+  })
+  await tab.report({ type: 'reply', id: command.data.id, value: [{ value: '"Term"' }] })
+  assert.deepEqual((await ran).value, { room: 'Lobby', results: [{ value: '"Term"' }] })
+
+  const published = await tool('run_in_module', { module: 'markdown', code: '1' })
+  assert.match(published.content[0].text, /is not a local module/)
+  const none = await tool('run_in_module', { module: 'Clock', code: '1' })
+  assert.match(none.content[0].text, /no module matches Clock; modules: Term/)
+  assert.equal((await tool('run_in_module', { module: 'Term', code: '1', timeout_s: 0 })).isError, true)
   tab.close()
 })
 

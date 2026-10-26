@@ -111,6 +111,20 @@ const TOOLS = [
     },
   },
   {
+    name: 'run_in_module',
+    description:
+      'Run JavaScript inside a local module (served from get_state.modules) in the class tab, e.g. to read its DOM or call its functions. ONLY when the user asks you to, or agrees: it acts in their browser. Published modules cannot run code. module: its name or part of its url, as in get_state.class.modules; it must be shown in the class tab\'s room (goto a room that shows it). code: an expression (await works), or statements: the last one\'s value is the result, but statements with await need return. Returns {room, results}, one entry per frame of the module in that room: {value} (JSON, or the value as text, cut at 20000 characters) or {error}. timeout_s: default 10.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string' },
+        code: { type: 'string', description: 'e.g. "document.body.innerText"' },
+        timeout_s: { type: 'integer', minimum: 1, maximum: 60 },
+      },
+      required: ['module', 'code'],
+    },
+  },
+  {
     name: 'wait_for_event',
     description:
       'Returns the next queued browser event, or {timeout: true}. timeout_s: 0 polls without blocking. Polling does not wake an idle agent; call it between work steps.',
@@ -440,6 +454,38 @@ export function startMcp(server: DevServer, options: McpOptions) {
     return server.request('read-state', { room, ...(args.key !== undefined ? { key: args.key } : {}) })
   }
 
+  async function runInModule(args: any) {
+    if (typeof args.module !== 'string' || !args.module) throw new Error('module must be a name or part of a url')
+    if (typeof args.code !== 'string' || !args.code.trim() || args.code.length > 100000) {
+      throw new Error('code must be a string of at most 100000 characters')
+    }
+    const seconds = args.timeout_s === undefined ? 10 : args.timeout_s
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 60) throw new Error('timeout_s must be an integer from 1 to 60')
+
+    const { connected, class: state } = server.state()
+    if (!connected || !state) throw new Error(`the class tab is not open: ${options.url}`)
+    const urls = [
+      ...new Set(
+        state.modules.filter((m) => m.name === args.module || m.url.includes(args.module)).map((m) => m.url)
+      ),
+    ]
+    if (urls.length !== 1) {
+      const known = state.modules.map((m) => `${m.name} (${m.url})`).join(', ')
+      throw new Error(`${urls.length ? 'more than one' : 'no'} module matches ${args.module}; modules: ${known}`)
+    }
+    const url = urls[0]
+
+    // a published module is on another origin, without the runner
+    const local = server.modules && new URL(server.modules.url)
+    const served =
+      local &&
+      ['localhost', '127.0.0.1'].some((host) => url.startsWith(`${local.protocol}//${host}:${local.port}/`))
+    if (!served) throw new Error(`${url} is not a local module: only those of get_state.modules can run code`)
+
+    const results = await server.request('run-module', { url, code: args.code, ms: seconds * 1000 }, seconds * 1000 + 2000)
+    return { room: server.state().class?.room ?? null, results }
+  }
+
   function readChat(args: any) {
     const last = args.last === undefined ? 50 : args.last
     if (!Number.isInteger(last) || last < 1) throw new Error('last must be an integer >= 1')
@@ -482,6 +528,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
     read_chat: readChat,
     read_messages: readMessages,
     read_module_state: readModuleState,
+    run_in_module: runInModule,
     wait_for_event: waitForEvent,
   }
 

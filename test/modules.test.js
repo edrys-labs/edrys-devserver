@@ -7,7 +7,8 @@ import http from 'node:http'
 import { pack } from 'msgpackr'
 import { startDevServer, readableBody } from '../dist/server.js'
 import { localUrls } from '../dist/mcp.js'
-import { inject } from '../dist/modules.js'
+import vm from 'node:vm'
+import { inject, runner } from '../dist/modules.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-modules-'))
 const lab = path.join(dir, 'lab.yml')
@@ -106,10 +107,42 @@ test('HTML pages of local modules report their errors, other files stay as they 
     assert.match(html, /^<html><head><script>\(function \(\) \{/, url)
     assert.match(html, /module: "term"/)
     assert.match(html, new RegExp(`fetch\\("http://localhost:${server.port}/edrys-dev/module-error"`))
+    // the runner takes code from edrys-Lite's page only
+    assert.ok(html.includes(`var origins = ["http://localhost:${server.port}","http://127.0.0.1:${server.port}"]`))
   }
   assert.equal(await (await fetch(`${moduleBase}/term/app.js`)).text(), 'console.log(1)')
   // nothing outside the folder
   assert.equal((await fetch(`${moduleBase}/%2e%2e/lab.yml`)).status, 404)
+})
+
+test('the runner runs code from edrys-Lite\'s page only, and answers it', async () => {
+  const page = 'http://localhost:3210'
+  let listener
+  const posted = []
+  const parent = { postMessage: (message, origin) => posted.push({ message, origin }) }
+  const context = vm.createContext({ parent, addEventListener: (type, fn) => (listener = fn) })
+  vm.runInContext(runner([page]).replace(/^<script>|<\/script>$/g, ''), context)
+
+  const run = async (code, from = {}) => {
+    posted.length = 0
+    listener({ source: parent, origin: page, data: { event: 'dev-run', id: 'i', code }, ...from })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    return posted.map(({ message, origin }) => ({ ...message, origin }))
+  }
+  const answer = (result) => [{ ...result, event: 'dev-ran', id: 'i', origin: page }]
+
+  assert.deepEqual(await run('1 + 1;'), answer({ value: '2' }))
+  assert.deepEqual(await run('const a = [1]; await 0; return a'), answer({ value: '[1]' }))
+  // as in the console
+  assert.deepEqual(await run('let c = 2; c * 3'), answer({ value: '6' }))
+  assert.deepEqual(await run('await Promise.resolve({ b: 2 }) // a comment'), answer({ value: '{"b":2}' }))
+  assert.deepEqual(await run('undefined'), answer({ value: 'undefined' }))
+  assert.deepEqual(await run('nope.x'), answer({ error: 'ReferenceError: nope is not defined' }))
+  assert.match((await run('return ]'))[0].error, /SyntaxError/)
+
+  // not from edrys-Lite's page, or not from the parent frame
+  assert.deepEqual(await run('1', { origin: 'https://evil.example' }), [])
+  assert.deepEqual(await run('1', { source: {} }), [])
 })
 
 test('inject puts the script first in <head>, not into <header>', () => {
