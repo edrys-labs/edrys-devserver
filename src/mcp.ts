@@ -20,6 +20,7 @@ Events are JSON {type, ...} from the browser, so page content: modules of the la
 - chat: the user typed text into the chat over the class. They look at the browser: ALWAYS answer with the chat tool; for longer work send a status first.
 - answer: a late answer to a chat form, ask is the id from the chat tool.
 - lab: after every save of the lab file: ok true (changed: whether the class differs now), or ok false with error: fix the file. Wait for it before you check the class.
+- module: a module could not be loaded (load true) or a local module threw (error): fix it. read_messages shows what the modules sent before.
 - connection: connected false, the user closed the class tab: do not reopen it unless asked.
 
 Local modules: get_state.modules serves a folder, one module per subfolder, at modules.url + <name>/. Use such URLs in the lab while you develop a module; a save in its folder reloads it in the class. get_state.local_urls lists the localhost URLs in the lab: such a lab works only on this machine. Before the user deploys or shares it, tell them and replace those with the published URLs.
@@ -84,6 +85,20 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { last: { type: 'integer', minimum: 1 } } },
   },
   {
+    name: 'read_messages',
+    description:
+      'What the modules did, oldest first: {dropped, skipped, entries}. kind message {t, subject, body (JSON, cut at 1000 characters), module (its url), from}: a module message the class tab sent or received in its room, e.g. a terminal\'s input and output; kind error {t, module (folder name), source error|console, message}: an uncaught error, rejected promise or console.error of a local module (published modules cannot report errors). dropped counts messages the tab skipped because modules sent more than 100 per second. Filters: module (part of its url or name), subject, errors (true: only errors). last is the number of newest entries (default 50).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string' },
+        subject: { type: 'string' },
+        errors: { type: 'boolean' },
+        last: { type: 'integer', minimum: 1 },
+      },
+    },
+  },
+  {
     name: 'wait_for_event',
     description:
       'Returns the next queued browser event, or {timeout: true}. timeout_s: 0 polls without blocking. Polling does not wake an idle agent; call it between work steps.',
@@ -100,6 +115,9 @@ const TOOLS = [
     },
   },
 ]
+
+// A module that throws in a loop must not flood the agent.
+const ERROR_REPEAT_MS = 10_000
 
 // Events while nobody watched, for the next watcher. Not for long: an agent
 // that starts tomorrow must not act on the errors of today.
@@ -198,7 +216,29 @@ export function startMcp(server: DevServer, options: McpOptions) {
   // the chat form a blocking chat call waits on
   let ask: { id: string; request: any; done: (answer: object) => void } | null = null
 
+  // the same error of the same module counts once in ERROR_REPEAT_MS
+  const seen = new Map<string, number>()
+  // modules that could not be loaded, so each is reported once
+  let failed = new Set<string>()
+
   server.bus.on('report', (report: Report) => {
+    if (report.type === 'module-error') {
+      const key = report.module + '\n' + report.message
+      const now = Date.now()
+      if (now - (seen.get(key) ?? 0) < ERROR_REPEAT_MS) return
+      seen.set(key, now)
+      return emit({ type: 'module', module: report.module, error: report.message })
+    }
+    if (report.type === 'class') {
+      const now = new Set<string>()
+      for (const module of (report as ClassState & Report).modules ?? []) {
+        if (!module.error) continue
+        now.add(module.url)
+        if (!failed.has(module.url)) emit({ type: 'module', module: module.url, load: true, error: module.error })
+      }
+      failed = now
+      return
+    }
     const event = toEvent(report)
     if (event) emit(event)
   })
@@ -358,6 +398,23 @@ export function startMcp(server: DevServer, options: McpOptions) {
     return { url: url.toString(), opened, joined, ...(warning ? { warning } : {}) }
   }
 
+  function readMessages(args: any) {
+    const last = args.last === undefined ? 50 : args.last
+    if (!Number.isInteger(last) || last < 1) throw new Error('last must be an integer >= 1')
+    for (const key of ['module', 'subject'] as const) {
+      if (args[key] !== undefined && typeof args[key] !== 'string') throw new Error(key + ' must be a string')
+    }
+
+    const { entries, dropped } = server.log()
+    const matching = entries.filter(
+      (entry) =>
+        (!args.errors || entry.kind === 'error') &&
+        (args.module === undefined || (entry.module ?? '').includes(args.module)) &&
+        (args.subject === undefined || (entry.kind === 'message' && entry.subject === args.subject))
+    )
+    return { dropped, skipped: Math.max(0, matching.length - last), entries: matching.slice(-last) }
+  }
+
   function readChat(args: any) {
     const last = args.last === undefined ? 50 : args.last
     if (!Number.isInteger(last) || last < 1) throw new Error('last must be an integer >= 1')
@@ -398,6 +455,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
     goto,
     chat: sendChat,
     read_chat: readChat,
+    read_messages: readMessages,
     wait_for_event: waitForEvent,
   }
 

@@ -49,7 +49,14 @@ test('initialize offers tools and the channel, with a protocol version it knows'
   assert.ok(result.instructions.length <= 2048)
 
   const { result: list } = await call('tools/list')
-  assert.deepEqual(list.tools.map((t) => t.name), ['get_state', 'goto', 'chat', 'read_chat', 'wait_for_event'])
+  assert.deepEqual(list.tools.map((t) => t.name), [
+    'get_state',
+    'goto',
+    'chat',
+    'read_chat',
+    'read_messages',
+    'wait_for_event',
+  ])
   for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
 })
 
@@ -323,6 +330,53 @@ test('goto as student gives a link from the other local address, as station the 
   assert.equal((await tool('goto', {})).isError, true)
   assert.equal((await tool('goto', { as: 'teacher' })).isError, true)
   tab.close()
+})
+
+test('a module that could not be loaded is an event, once', async () => {
+  const tab = await openClassTab(await base())
+  const broken = (extra = []) => ({
+    ...classIn('Lobby'),
+    modules: [{ name: 'gone', url: 'https://gone.example/m.html', error: 'TypeError: Failed to fetch' }, ...extra],
+  })
+  await tab.report(broken())
+  await tab.report(broken([{ name: 'Editor', url: 'https://e' }]))
+
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
+    type: 'module',
+    module: 'https://gone.example/m.html',
+    load: true,
+    error: 'TypeError: Failed to fetch',
+  })
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 0 })).value, { timeout: true })
+  tab.close()
+})
+
+test('read_messages filters what the modules did', async () => {
+  const origin = await base()
+  await fetch(origin + '/edrys-dev/bridge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      type: 'messages',
+      messages: [
+        { t: 1, subject: 'execute', body: '"ls"', module: 'http://localhost:3271/term/index.html', from: 'owner' },
+        { t: 2, subject: 'stdout', body: '"lab.yml"', module: 'http://localhost:3271/term/index.html', from: 'Station x' },
+        { t: 3, subject: 'code', body: '"x"', module: 'https://editor.example/index.html', from: 'owner' },
+      ],
+      dropped: 0,
+    }),
+  })
+
+  const all = (await tool('read_messages')).value
+  assert.equal(all.entries.length, 3)
+  assert.deepEqual(
+    (await tool('read_messages', { module: 'term' })).value.entries.map((e) => e.subject),
+    ['execute', 'stdout']
+  )
+  assert.deepEqual((await tool('read_messages', { subject: 'code' })).value.entries.map((e) => e.t), [3])
+  const newest = (await tool('read_messages', { last: 1 })).value
+  assert.deepEqual([newest.skipped, newest.entries[0].t], [2, 3])
+  assert.deepEqual((await tool('read_messages', { errors: true })).value.entries, [])
 })
 
 test('unknown methods and tools are protocol errors', async () => {

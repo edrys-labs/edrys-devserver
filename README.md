@@ -29,7 +29,7 @@ modules:
   - url: http://localhost:3211/my-module/index.html
 ```
 
-edrys-dev serves that folder on the port after its own (3211 by default; another origin, as real modules have). Saving a file in `modules/my-module/` reloads that module in the class tab, without touching the others, and reloads student and station tabs. Such a lab only works on your machine: replace the local addresses with the published ones before you deploy it.
+edrys-dev serves that folder on the port after its own (3211 by default; another origin, as real modules have). Saving a file in `modules/my-module/` reloads that module in the class tab, without touching the others, and reloads student and station tabs. Its HTML pages get a small script that reports uncaught errors and `console.error` to edrys-dev, for the agent. Such a lab only works on your machine: replace the local addresses with the published ones before you deploy it.
 
 ## With an AI agent (`--mcp`)
 
@@ -43,7 +43,7 @@ With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Cod
 }
 ```
 
-Tools: `get_state` (lab file, class URL, share link, whether the class tab is open), `chat` and `read_chat`, `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
+Tools: `get_state` (lab file, class URL, share link, the class: rooms, users, modules), `goto` (move the class tab to a room, open a student or station tab), `chat` and `read_chat`, `read_messages` (module messages the class tab saw, and errors of local modules), `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
 
 The class tab gets a chat panel (🤖, bottom right) where you and the agent talk; it is not the class's own chat, nobody else sees it. The agent can ask with buttons or checkboxes there. The chat is saved in `.edrys-dev/chat.json` next to the lab, so a restarted agent can read it; add `.edrys-dev/` to the lab's `.gitignore`.
 

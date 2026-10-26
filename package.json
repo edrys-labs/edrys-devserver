@@ -28,6 +28,7 @@
     "edrys-lite": "file:../edrys-Lite",
     "express": "^5.1.0",
     "marked": "^18.1.1",
+    "msgpackr": "^2.1.2",
     "open": "^10.1.0"
   },
   "optionalDependencies": {

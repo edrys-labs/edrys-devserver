@@ -4,6 +4,7 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import express from 'express'
+import { unpack } from 'msgpackr'
 import { watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { sameOrigin } from './origin.js'
@@ -14,7 +15,37 @@ export type Report = { type: string; [key: string]: any }
 export type ClassState = {
   room: string | null
   rooms: Record<string, { name: string; role: string; me?: true }[]>
-  modules: string[]
+  modules: { name: string; url: string; error?: string }[]
+}
+
+/** What the modules did, as the class tab saw it, and what local modules threw. */
+export type LogEntry =
+  | { t: number; kind: 'message'; subject: string; body: string; module?: string; from?: string }
+  | { t: number; kind: 'error'; module: string; source: 'error' | 'console'; message: string }
+
+// entries the log keeps, oldest first out
+const LOG_MAX = 300
+// a body in the log is cut to this many characters of JSON
+const BODY_MAX = 1000
+
+/**
+ * A module message body as the agent can read it: edrys.js sends bodies as
+ * base64 MessagePack, the class tab passes them on as they are.
+ */
+export function readableBody(body: unknown): string {
+  let value = body
+  if (typeof body === 'string' && body.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(body)) {
+    try {
+      value = unpack(Buffer.from(body, 'base64'))
+    } catch {}
+  }
+  let text: string
+  try {
+    text = JSON.stringify(value) ?? String(value)
+  } catch {
+    text = String(value)
+  }
+  return text.length > BODY_MAX ? text.slice(0, BODY_MAX) + '…' : text
 }
 
 export type DevServerOptions = {
@@ -50,6 +81,8 @@ export type DevServer = {
   send(event: string, data: object): void
   /** The local modules folder and the address it is served at, if any. */
   modules: { dir: string; url: string } | null
+  /** Module messages and errors, oldest first; `dropped` messages the tab skipped. */
+  log(): { entries: LogEntry[]; dropped: number }
   close(): Promise<void>
 }
 
@@ -74,6 +107,13 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const clients = new Set<express.Response>()
   let share: string | null = null
   let classState: ClassState | null = null
+
+  const log: LogEntry[] = []
+  let dropped = 0
+  const addLog = (entry: LogEntry) => {
+    log.push(entry)
+    if (log.length > LOG_MAX) log.splice(0, log.length - LOG_MAX)
+  }
 
   let reported = false
   let settling: NodeJS.Timeout | undefined
@@ -133,7 +173,34 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       const { type, ...state } = report
       classState = state as ClassState
     }
+    if (report.type === 'messages' && Array.isArray(report.messages)) {
+      for (const m of report.messages) addLog({ ...m, body: readableBody(m.body), kind: 'message' })
+      dropped += Number(report.dropped) || 0
+    }
     bus.emit('report', report)
+    res.sendStatus(204)
+  })
+
+  // The error reporter of local modules (see modules.ts): from the module
+  // server's origin, or "null" for a module edrys-Lite inlined.
+  let moduleOrigins: string[] = []
+  app.post('/edrys-dev/module-error', express.text({ type: () => true }), (req, res) => {
+    if (!moduleOrigins.includes(String(req.headers.origin))) return res.sendStatus(403)
+    let error: any
+    try {
+      error = JSON.parse(req.body)
+    } catch {
+      return res.sendStatus(400)
+    }
+    const entry: LogEntry = {
+      t: Date.now(),
+      kind: 'error',
+      module: String(error.module),
+      source: error.kind === 'console' ? 'console' : 'error',
+      message: String(error.message).slice(0, 2000),
+    }
+    addLog(entry)
+    bus.emit('report', { type: 'module-error', ...entry })
     res.sendStatus(204)
   })
 
@@ -162,9 +229,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   let stopModules = async () => {}
   if (options.modules) {
     const dir = options.modules
-    const moduleServer = http.createServer(moduleApp(dir))
+    const moduleServer = http.createServer(moduleApp(dir, `http://localhost:${port}/edrys-dev/module-error`))
     const modulePort = await listen(moduleServer, port + 1, options.host)
     modules = { dir, url: `http://localhost:${modulePort}/` }
+    moduleOrigins = [`http://localhost:${modulePort}`, `http://127.0.0.1:${modulePort}`, 'null']
 
     const stopWatchingModules = watchModules(dir, (name) => {
       // the lab may name either local address
@@ -189,6 +257,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     state: () => ({ connected: clients.size > 0, share, class: classState }),
     send,
     modules,
+    log: () => ({ entries: log, dropped }),
     async close() {
       clearTimeout(settling)
       await stopWatching()
