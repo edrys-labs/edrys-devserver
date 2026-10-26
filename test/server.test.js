@@ -14,7 +14,8 @@ let server, base
 
 before(async () => {
   fs.writeFileSync(lab, 'name: One\n')
-  server = await startDevServer({ lab, port: 3290, host: '127.0.0.1', onReport: (r) => reports.push(r) })
+  server = await startDevServer({ lab, port: 3290, host: '127.0.0.1' })
+  server.bus.on('report', (r) => reports.push(r))
   base = `http://127.0.0.1:${server.port}`
 })
 
@@ -69,6 +70,38 @@ test('passes browser reports on', async () => {
   })
   assert.equal(response.status, 204)
   assert.deepEqual(reports.at(-1), { type: 'open', url: 'x' })
+  assert.equal(server.state().share, 'x')
+})
+
+test('refuses reports from pages of another origin', async () => {
+  const response = await fetch(base + '/edrys-dev/bridge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://some-module.example' },
+    body: JSON.stringify({ type: 'open', url: 'forged' }),
+  })
+  assert.equal(response.status, 403)
+  assert.notEqual(server.state().share, 'forged')
+})
+
+test('reports the owner tab coming and going, not a quick reload', async () => {
+  const seen = []
+  const listener = (connected) => seen.push(connected)
+  server.bus.on('connection', listener)
+  const connect = () => {
+    const request = http.get(base + '/edrys-dev/events')
+    return new Promise((resolve) => request.on('response', () => resolve(request)))
+  }
+
+  let tab = await connect()
+  await new Promise((resolve) => setTimeout(resolve, 2300))
+  tab.destroy() // reload: gone and back within a moment
+  tab = await connect()
+  await new Promise((resolve) => setTimeout(resolve, 2300))
+  tab.destroy()
+  await new Promise((resolve) => setTimeout(resolve, 2300))
+
+  server.bus.off('connection', listener)
+  assert.deepEqual(seen, [true, false])
 })
 
 test('--local: syncs Yjs docs on the same port and points the class there', async () => {

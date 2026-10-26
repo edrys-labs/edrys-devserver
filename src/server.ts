@@ -1,6 +1,7 @@
 import http from 'node:http'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import express from 'express'
 import { watchFile } from './watch.js'
@@ -17,19 +18,35 @@ export type DevServerOptions = {
    * built with (its .env), e.g. to work offline.
    */
   local?: boolean
-  /** What the browser tabs report (POST /edrys-dev/bridge). */
-  onReport?: (report: Report) => void
 }
 
 export type DevServer = {
   port: number
+  app: express.Express
+  /**
+   * `report` (Report): what a tab posted to /edrys-dev/bridge.
+   * `connection` (boolean): the owner tab came or went, settled over SETTLE_MS.
+   */
+  bus: EventEmitter
+  /** Whether the owner tab is connected, and the share link it reported last. */
+  state(): { connected: boolean; share: string | null }
   close(): Promise<void>
 }
+
+// A reload closes the owner tab's stream and opens a new one within a moment;
+// only a change that lasts this long counts.
+const SETTLE_MS = 2000
 
 /** The built edrys-Lite this package serves. */
 export function edrysDist(): string {
   const require = createRequire(import.meta.url)
   return path.join(path.dirname(require.resolve('edrys-lite/package.json')), 'dist')
+}
+
+/** Requests from a page of another origin, e.g. a module's own site, are refused. */
+export function sameOrigin(req: express.Request): boolean {
+  const origin = req.headers.origin
+  return origin === undefined || origin === `http://${req.headers.host}`
 }
 
 /**
@@ -39,7 +56,19 @@ export function edrysDist(): string {
  */
 export async function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const app = express()
+  const bus = new EventEmitter()
   const clients = new Set<express.Response>()
+  let share: string | null = null
+
+  let reported = false
+  let settling: NodeJS.Timeout | undefined
+  const settle = () => {
+    clearTimeout(settling)
+    settling = setTimeout(() => {
+      const connected = clients.size > 0
+      if (connected !== reported) bus.emit('connection', (reported = connected))
+    }, SETTLE_MS)
+  }
 
   app.get('/edrys-dev/lab', async (req, res) => {
     res.json({
@@ -60,11 +89,18 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     })
     res.write(': edrys-dev\n\n')
     clients.add(res)
-    req.on('close', () => clients.delete(res))
+    settle()
+    req.on('close', () => {
+      clients.delete(res)
+      settle()
+    })
   })
 
   app.post('/edrys-dev/bridge', express.json(), (req, res) => {
-    options.onReport?.(req.body)
+    if (!sameOrigin(req)) return res.sendStatus(403)
+    const report: Report = req.body
+    if (report.type === 'open' && typeof report.url === 'string') share = report.url
+    bus.emit('report', report)
     res.sendStatus(204)
   })
 
@@ -81,7 +117,11 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   return {
     port,
+    app,
+    bus,
+    state: () => ({ connected: clients.size > 0, share }),
     async close() {
+      clearTimeout(settling)
       await stopWatching()
       stopSync()
       for (const client of clients) client.end()

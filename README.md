@@ -20,6 +20,20 @@ class open, share link:
 
 When the lab is done, publish `lab.yml` as usual (for example with a deploy link to https://edrys-labs.github.io).
 
+## With an AI agent (`--mcp`)
+
+With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Code starts it, edits `lab.yml` with its own file tools and hears from the browser when the class could not take the lab. Put it into the lab folder's `.mcp.json`; do not start `--mcp` yourself:
+
+```json
+{
+  "mcpServers": {
+    "edrys": { "command": "edrys-dev", "args": ["--mcp", "lab.yml"] }
+  }
+}
+```
+
+Tools: `get_state` (lab file, class URL, share link, whether the class tab is open) and `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
+
 ## Options
 
 | Option | Default | |
@@ -29,6 +43,7 @@ When the lab is done, publish `lab.yml` as usual (for example with a deploy link
 | `--host <host>` | `127.0.0.1` | address to listen on |
 | `--local` | off | sync on edrys-dev's own port instead of edrys-Lite's default transport |
 | `-o, --open` | off | open the lab in the browser |
+| `--mcp` | off | serve an AI agent over stdio, see above |
 
 ## Development
 

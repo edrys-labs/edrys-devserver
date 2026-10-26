@@ -4,6 +4,7 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import open from 'open'
 import { startDevServer, type Report } from './server.js'
+import { startMcp } from './mcp.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -15,6 +16,8 @@ Usage: edrys-dev [lab.yml] [options]
       --local         sync on this server instead of edrys-Lite's default
                       transport (works offline)
   -o, --open          open the lab in the browser
+      --mcp           serve an AI agent over stdio (MCP); started by the
+                      agent from its MCP config, not by hand
   -h, --help          show this help
 
 The tab opened at /?dev owns the class and republishes it whenever the lab
@@ -28,12 +31,16 @@ const { values, positionals } = parseArgs({
     host: { type: 'string', default: '127.0.0.1' },
     local: { type: 'boolean', default: false },
     open: { type: 'boolean', short: 'o', default: false },
+    mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
   },
 })
 
+// with --mcp, stdout carries the protocol
+const say = values.mcp ? console.error : console.log
+
 if (values.help) {
-  console.log(HELP)
+  say(HELP)
   process.exit(0)
 }
 
@@ -43,31 +50,29 @@ if (!fs.existsSync(lab)) {
   process.exit(1)
 }
 
-function log(report: Report) {
-  switch (report.type) {
-    case 'open':
-      console.log(`class open, share link:\n  ${report.url}`)
-      break
-    case 'error':
-      console.error(`lab error: ${report.message}`)
-      break
-    default:
-      console.log(report)
-  }
-}
-
 const server = await startDevServer({
   lab,
   port: Number(values.port),
   host: values.host,
   local: values.local,
-  onReport: log,
+})
+
+server.bus.on('report', (report: Report) => {
+  switch (report.type) {
+    case 'open':
+      say(`class open, share link:\n  ${report.url}`)
+      break
+    case 'error':
+      console.error(`lab error: ${report.message}`)
+      break
+  }
 })
 
 const host = ['127.0.0.1', '0.0.0.0', '::'].includes(values.host) ? 'localhost' : values.host
 const url = `http://${host}:${server.port}/?dev`
 
-console.log(`edrys-dev: ${lab}\n  ${url}`)
+say(`edrys-dev: ${lab}\n  ${url}`)
+if (values.mcp) startMcp(server, { lab, url })
 if (values.open) await open(url)
 
 process.on('SIGINT', async () => {
