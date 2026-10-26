@@ -43,9 +43,15 @@ With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Cod
 }
 ```
 
-Tools: `get_state` (lab file, class URL, share link, the class: rooms, users, modules), `goto` (move the class tab to a room, open a student or station tab), `chat` and `read_chat`, `read_messages` (module messages the class tab saw, and errors of local modules), `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
+Tools: `get_state` (lab file, class URL, share link, the class: rooms, users, modules), `goto` (move the class tab to a room, open a student or station tab), `chat` and `read_chat`, `read_messages` (module messages the class tab saw, and errors of local modules), `read_module_state` (what the modules share in a room), `run_in_module` (JavaScript in a local module's frame, only when you ask for it), `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
 
 The class tab gets a chat panel (🤖, bottom right) where you and the agent talk; it is not the class's own chat, nobody else sees it. The agent can ask with buttons or checkboxes there. The chat is saved in `.edrys-dev/chat.json` next to the lab, so a restarted agent can read it; add `.edrys-dev/` to the lab's `.gitignore`.
+
+The tools show the agent whether the lab works; what to write comes from the [edrys skills](https://github.com/edrys-labs/skills), recommended with edrys-dev: `edrys-lab` for labs, `edrys-module` for modules. Both say how to use edrys-dev when it is connected.
+
+```bash
+npx skills add edrys-labs/skills
+```
 
 ## Options
 
