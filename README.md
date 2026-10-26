@@ -32,7 +32,9 @@ With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Cod
 }
 ```
 
-Tools: `get_state` (lab file, class URL, share link, whether the class tab is open) and `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
+Tools: `get_state` (lab file, class URL, share link, whether the class tab is open), `chat` and `read_chat`, `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
+
+The class tab gets a chat panel (🤖, bottom right) where you and the agent talk; it is not the class's own chat, nobody else sees it. The agent can ask with buttons or checkboxes there. The chat is saved in `.edrys-dev/chat.json` next to the lab, so a restarted agent can read it; add `.edrys-dev/` to the lab's `.gitignore`.
 
 ## Options
 

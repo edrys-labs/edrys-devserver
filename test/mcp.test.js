@@ -49,7 +49,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
   assert.ok(result.instructions.length <= 2048)
 
   const { result: list } = await call('tools/list')
-  assert.deepEqual(list.tools.map((t) => t.name), ['get_state', 'wait_for_event'])
+  assert.deepEqual(list.tools.map((t) => t.name), ['get_state', 'chat', 'read_chat', 'wait_for_event'])
   for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
 })
 
@@ -99,6 +99,141 @@ test('wait_for_event times out, and tool errors come back as results', async () 
   const bad = await tool('wait_for_event', { timeout_s: -1 })
   assert.equal(bad.isError, true)
   assert.match(bad.content[0].text, /timeout_s/)
+})
+
+// The chat panel's side: its event stream and its posts.
+async function openPanel(base) {
+  const controller = new AbortController()
+  const response = await fetch(base + '/edrys-dev/chat/events', { signal: controller.signal })
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  const messages = []
+  let buffer = ''
+  ;(async () => {
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) return
+        buffer += decoder.decode(value)
+        let end
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, end)
+          buffer = buffer.slice(end + 2)
+          if (block.startsWith('data: ')) messages.push(JSON.parse(block.slice(6)))
+        }
+      }
+    } catch {}
+  })()
+  const post = (body) =>
+    fetch(base + '/edrys-dev/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  const until = async (test) => {
+    for (let i = 0; i < 50 && !messages.some(test); i++) await new Promise((r) => setTimeout(r, 20))
+    return messages.find(test)
+  }
+  return { messages, post, until, close: () => controller.abort() }
+}
+
+async function base() {
+  const { value } = await tool('get_state')
+  return new URL(value.url).origin
+}
+
+test('the page carries the chat panel', async () => {
+  const page = await (await fetch((await base()) + '/?dev')).text()
+  assert.match(page, /<script src="\/edrys-dev\/panel\.js" defer><\/script>$/)
+  for (const file of ['panel.js', 'marked.js', 'purify.js']) {
+    assert.equal((await fetch(`${await base()}/edrys-dev/${file}`)).status, 200, file)
+  }
+})
+
+test('chat needs the panel', async () => {
+  // the Monitor of an earlier test is gone by now
+  await new Promise((r) => setTimeout(r, 200))
+  const result = await tool('chat', { markdown: 'hi' })
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /chat is not open/)
+})
+
+test('messages, forms and typed text between agent and panel', async () => {
+  const panel = await openPanel(await base())
+  await panel.until((m) => m.type === 'history')
+  assert.equal((await tool('get_state')).value.chat, true)
+
+  // a plain message
+  assert.deepEqual((await tool('chat', { markdown: '**Hello**' })).value, { sent: true })
+  assert.ok(await panel.until((m) => m.type === 'entry' && m.entry.markdown === '**Hello**'))
+
+  // a form blocks until the panel answers
+  const pending = tool('chat', {
+    markdown: 'Which board?',
+    inputs: [{ id: 'board', type: 'buttons', options: ['Uno', 'ESP32'] }],
+  })
+  const form = await panel.until((m) => m.type === 'entry' && m.entry.ask)
+  assert.equal((await panel.post({ ask: form.entry.ask, values: { board: 'ESP32' } })).status, 204)
+  assert.deepEqual((await pending).value, { ask: form.entry.ask, values: { board: 'ESP32' } })
+  // answered: the form is gone
+  assert.equal((await panel.post({ ask: form.entry.ask, values: { board: 'Uno' } })).status, 409)
+
+  // typing instead of answering dismisses the call; the form stays open
+  const second = tool('chat', {
+    markdown: 'Ready?',
+    inputs: [{ id: 'go', type: 'buttons', options: ['Yes'] }],
+  })
+  const secondForm = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'Ready?')
+  await panel.post({ text: 'wait a moment' })
+  assert.deepEqual((await second).value, { ask: secondForm.entry.ask, dismissed: true, text: 'wait a moment' })
+  // its late answer is an event
+  await panel.post({ ask: secondForm.entry.ask, values: { go: 'Yes' } })
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
+    type: 'answer',
+    ask: secondForm.entry.ask,
+    values: { go: 'Yes' },
+  })
+
+  // typed text without a form is a chat event
+  await panel.post({ text: 'Why does Execute do nothing?' })
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
+    type: 'chat',
+    text: 'Why does Execute do nothing?',
+  })
+
+  // status only
+  await tool('chat', { status: 'Reading the module docs' })
+  assert.ok(await panel.until((m) => m.type === 'status' && m.text === 'Reading the module docs'))
+
+  // a new form closes the one before
+  const third = tool('chat', { markdown: 'A?', inputs: [{ id: 'a', type: 'buttons', options: ['1'] }] })
+  const thirdForm = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'A?')
+  const fourth = tool('chat', { markdown: 'B?', inputs: [{ id: 'b', type: 'buttons', options: ['2'] }] })
+  assert.deepEqual((await third).value, { ask: thirdForm.entry.ask, superseded: true })
+  assert.ok(await panel.until((m) => m.type === 'close' && m.ask === thirdForm.entry.ask))
+
+  // the panel closes while a form waits
+  panel.close()
+  assert.equal((await fourth).value.disconnected, true)
+})
+
+test('read_chat returns what the panel shows, saved next to the lab', async () => {
+  const { value } = await tool('read_chat', { last: 3 })
+  assert.equal(value.entries.length, 3)
+  assert.ok(value.skipped > 0)
+  assert.deepEqual(value.entries.at(-1).markdown, 'B?')
+
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, '.edrys-dev', 'chat.json'), 'utf8'))
+  assert.deepEqual(saved.slice(-3), value.entries)
+})
+
+test('the chat refuses posts from other origins', async () => {
+  const response = await fetch((await base()) + '/edrys-dev/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://some-module.example' },
+    body: JSON.stringify({ text: 'forged' }),
+  })
+  assert.equal(response.status, 403)
 })
 
 test('unknown methods and tools are protocol errors', async () => {

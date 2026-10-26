@@ -5,6 +5,8 @@ import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import express from 'express'
 import { watchFile } from './watch.js'
+import { sameOrigin } from './origin.js'
+import { Chat, PANEL_SCRIPT } from './chat.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -28,6 +30,8 @@ export type DevServer = {
    * `connection` (boolean): the owner tab came or went, settled over SETTLE_MS.
    */
   bus: EventEmitter
+  /** The agent chat over the class tab. */
+  chat: Chat
   /** Whether the owner tab is connected, and the share link it reported last. */
   state(): { connected: boolean; share: string | null }
   close(): Promise<void>
@@ -41,12 +45,6 @@ const SETTLE_MS = 2000
 export function edrysDist(): string {
   const require = createRequire(import.meta.url)
   return path.join(path.dirname(require.resolve('edrys-lite/package.json')), 'dist')
-}
-
-/** Requests from a page of another origin, e.g. a module's own site, are refused. */
-export function sameOrigin(req: express.Request): boolean {
-  const origin = req.headers.origin
-  return origin === undefined || origin === `http://${req.headers.host}`
 }
 
 /**
@@ -104,6 +102,15 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     res.sendStatus(204)
   })
 
+  const chat = new Chat(path.join(path.dirname(options.lab), '.edrys-dev', 'chat.json'))
+  chat.routes(app)
+
+  // edrys-Lite's page, with the chat panel (it shows only in the class tab)
+  app.get(['/', '/index.html'], async (req, res) => {
+    const page = await fs.readFile(path.join(edrysDist(), 'index.html'), 'utf8')
+    res.type('html').send(page + PANEL_SCRIPT)
+  })
+
   app.use(express.static(edrysDist()))
 
   const server = http.createServer(app)
@@ -119,6 +126,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     port,
     app,
     bus,
+    chat,
     state: () => ({ connected: clients.size > 0, share }),
     async close() {
       clearTimeout(settling)
