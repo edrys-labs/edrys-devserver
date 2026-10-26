@@ -1,0 +1,43 @@
+{
+  "name": "edrys-devserver",
+  "version": "0.1.0",
+  "description": "Develop edrys-Lite labs locally: serves edrys-Lite, syncs on its own port and republishes the class whenever the lab file changes",
+  "type": "module",
+  "bin": {
+    "edrys-dev": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "test": "tsc && node --test"
+  },
+  "keywords": [
+    "edrys",
+    "edrys-lite",
+    "remote lab",
+    "devServer"
+  ],
+  "license": "MPL-2.0",
+  "dependencies": {
+    "chokidar": "^4.0.3",
+    "edrys-lite": "file:../edrys-Lite",
+    "express": "^5.1.0",
+    "open": "^10.1.0"
+  },
+  "optionalDependencies": {
+    "edrys-websocket-server": "file:../websocket-server",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
