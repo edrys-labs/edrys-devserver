@@ -49,7 +49,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
   assert.ok(result.instructions.length <= 2048)
 
   const { result: list } = await call('tools/list')
-  assert.deepEqual(list.tools.map((t) => t.name), ['get_state', 'chat', 'read_chat', 'wait_for_event'])
+  assert.deepEqual(list.tools.map((t) => t.name), ['get_state', 'goto', 'chat', 'read_chat', 'wait_for_event'])
   for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
 })
 
@@ -234,6 +234,95 @@ test('the chat refuses posts from other origins', async () => {
     body: JSON.stringify({ text: 'forged' }),
   })
   assert.equal(response.status, 403)
+})
+
+// The class tab's side: its command stream and its reports.
+async function openClassTab(origin) {
+  const controller = new AbortController()
+  const response = await fetch(origin + '/edrys-dev/events', { signal: controller.signal })
+  const reader = response.body.getReader()
+  const commands = []
+  ;(async () => {
+    const decoder = new TextDecoder()
+    let buffer = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) return
+        buffer += decoder.decode(value)
+        let end
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const block = buffer.slice(0, end)
+          buffer = buffer.slice(end + 2)
+          const event = block.match(/^event: (.+)$/m)?.[1]
+          const data = block.match(/^data: (.+)$/m)?.[1]
+          if (event) commands.push({ event, data: JSON.parse(data) })
+        }
+      }
+    } catch {}
+  })()
+  const report = (body) =>
+    fetch(origin + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  return { commands, report, close: () => controller.abort() }
+}
+
+const classIn = (room, extra = {}) => ({
+  type: 'class',
+  room,
+  rooms: { Lobby: [], 'Room 1': [], ...extra, [room]: [{ name: 'owner', role: 'teacher', me: true }] },
+  modules: ['Terminal'],
+})
+
+test('lab confirmations and the class reach the agent', async () => {
+  const tab = await openClassTab(await base())
+  await tab.report({ type: 'applied', changed: true })
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, { type: 'lab', ok: true, changed: true })
+
+  await tab.report(classIn('Lobby'))
+  const { value } = await tool('get_state')
+  assert.equal(value.connected, true)
+  assert.deepEqual(value.class, { room: 'Lobby', rooms: classIn('Lobby').rooms, modules: ['Terminal'] })
+  tab.close()
+})
+
+test('goto room moves the class tab and waits for it', async () => {
+  const tab = await openClassTab(await base())
+  await tab.report(classIn('Lobby'))
+
+  const moved = tool('goto', { room: 'Room 1' })
+  for (let i = 0; i < 50 && !tab.commands.some((c) => c.event === 'goto'); i++) await new Promise((r) => setTimeout(r, 20))
+  assert.deepEqual(tab.commands.find((c) => c.event === 'goto').data, { room: 'Room 1' })
+  await tab.report(classIn('Room 1'))
+  assert.equal((await moved).value.room, 'Room 1')
+
+  const unknown = await tool('goto', { room: 'Room 9' })
+  assert.equal(unknown.isError, true)
+  assert.match(unknown.content[0].text, /no room Room 9; rooms: Lobby, Room 1/)
+  tab.close()
+})
+
+test('goto as student gives a link from the other local address, as station the owner\'s', async () => {
+  const origin = await base()
+  const tab = await openClassTab(origin)
+  await tab.report({ type: 'open', url: `${origin}/?/classroom/abc/hash#comm=xyz` })
+
+  const student = (await tool('goto', { as: 'student', open: false })).value
+  assert.deepEqual(student, {
+    url: `${origin.replace('localhost', '127.0.0.1')}/?/classroom/abc/hash#comm=xyz`,
+    opened: false,
+    joined: false,
+  })
+  const station = (await tool('goto', { as: 'station', open: false })).value
+  // the owner runs the station: same address, same key
+  assert.equal(station.url, `${origin}/?/station/abc/hash#comm=xyz`)
+
+  assert.equal((await tool('goto', {})).isError, true)
+  assert.equal((await tool('goto', { as: 'teacher' })).isError, true)
+  tab.close()
 })
 
 test('unknown methods and tools are protocol errors', async () => {

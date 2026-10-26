@@ -10,6 +10,12 @@ import { Chat, PANEL_SCRIPT } from './chat.js'
 
 export type Report = { type: string; [key: string]: any }
 
+export type ClassState = {
+  room: string | null
+  rooms: Record<string, { name: string; role: string; me?: true }[]>
+  modules: string[]
+}
+
 export type DevServerOptions = {
   /** Absolute path of the lab file. */
   lab: string
@@ -32,8 +38,13 @@ export type DevServer = {
   bus: EventEmitter
   /** The agent chat over the class tab. */
   chat: Chat
-  /** Whether the owner tab is connected, and the share link it reported last. */
-  state(): { connected: boolean; share: string | null }
+  /**
+   * Whether the owner tab is connected, the share link and the class (own
+   * room, who is in which room, modules) it reported last.
+   */
+  state(): { connected: boolean; share: string | null; class: ClassState | null }
+  /** A command to the owner tab's DevBridge, e.g. goto {room}. */
+  send(event: string, data: object): void
   close(): Promise<void>
 }
 
@@ -57,6 +68,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const bus = new EventEmitter()
   const clients = new Set<express.Response>()
   let share: string | null = null
+  let classState: ClassState | null = null
 
   let reported = false
   let settling: NodeJS.Timeout | undefined
@@ -98,6 +110,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     if (!sameOrigin(req)) return res.sendStatus(403)
     const report: Report = req.body
     if (report.type === 'open' && typeof report.url === 'string') share = report.url
+    if (report.type === 'class') {
+      const { type, ...state } = report
+      classState = state as ClassState
+    }
     bus.emit('report', report)
     res.sendStatus(204)
   })
@@ -116,9 +132,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const server = http.createServer(app)
   // Loaded only when used: edrys-websocket-server is an optional dependency.
   const stopSync = options.local ? (await import('./sync.js')).attachSync(server) : () => {}
-  const stopWatching = watchFile(options.lab, () => {
-    for (const client of clients) client.write('event: reload-lab\ndata: {}\n\n')
-  })
+  const send = (event: string, data: object) => {
+    for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  }
+  const stopWatching = watchFile(options.lab, () => send('reload-lab', {}))
 
   const port = await listen(server, options.port, options.host)
 
@@ -127,7 +144,8 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     app,
     bus,
     chat,
-    state: () => ({ connected: clients.size > 0, share }),
+    state: () => ({ connected: clients.size > 0, share, class: classState }),
+    send,
     async close() {
       clearTimeout(settling)
       await stopWatching()
