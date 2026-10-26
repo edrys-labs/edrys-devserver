@@ -4,7 +4,8 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import express from 'express'
-import { watchFile } from './watch.js'
+import { watchFile, watchModules } from './watch.js'
+import { moduleApp } from './modules.js'
 import { sameOrigin } from './origin.js'
 import { Chat, PANEL_SCRIPT } from './chat.js'
 
@@ -26,6 +27,8 @@ export type DevServerOptions = {
    * built with (its .env), e.g. to work offline.
    */
   local?: boolean
+  /** Absolute path of a folder of local modules, one per subfolder. */
+  modules?: string
 }
 
 export type DevServer = {
@@ -45,6 +48,8 @@ export type DevServer = {
   state(): { connected: boolean; share: string | null; class: ClassState | null }
   /** A command to the owner tab's DevBridge, e.g. goto {room}. */
   send(event: string, data: object): void
+  /** The local modules folder and the address it is served at, if any. */
+  modules: { dir: string; url: string } | null
   close(): Promise<void>
 }
 
@@ -106,6 +111,20 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     })
   })
 
+  // Student and station tabs have no DevBridge: they only learn that a local
+  // module changed, and load the page again. Not counted as the owner tab.
+  const others = new Set<express.Response>()
+  app.get('/edrys-dev/reload', (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+    res.write(': edrys-dev\n\n')
+    others.add(res)
+    req.on('close', () => others.delete(res))
+  })
+
   app.post('/edrys-dev/bridge', express.json(), (req, res) => {
     if (!sameOrigin(req)) return res.sendStatus(403)
     const report: Report = req.body
@@ -139,6 +158,29 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   const port = await listen(server, options.port, options.host)
 
+  let modules: { dir: string; url: string } | null = null
+  let stopModules = async () => {}
+  if (options.modules) {
+    const dir = options.modules
+    const moduleServer = http.createServer(moduleApp(dir))
+    const modulePort = await listen(moduleServer, port + 1, options.host)
+    modules = { dir, url: `http://localhost:${modulePort}/` }
+
+    const stopWatchingModules = watchModules(dir, (name) => {
+      // the lab may name either local address
+      for (const host of ['localhost', '127.0.0.1']) {
+        send('reload-module', { url: `http://${host}:${modulePort}/${name}/` })
+      }
+      for (const other of others) other.write('event: reload-module\ndata: {}\n\n')
+      bus.emit('module-changed', name)
+    })
+    stopModules = async () => {
+      await stopWatchingModules()
+      moduleServer.closeAllConnections()
+      await new Promise((resolve) => moduleServer.close(resolve))
+    }
+  }
+
   return {
     port,
     app,
@@ -146,11 +188,13 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     chat,
     state: () => ({ connected: clients.size > 0, share, class: classState }),
     send,
+    modules,
     async close() {
       clearTimeout(settling)
       await stopWatching()
+      await stopModules()
       stopSync()
-      for (const client of clients) client.end()
+      for (const client of [...clients, ...others]) client.end()
       server.closeAllConnections()
       await new Promise((resolve) => server.close(resolve))
     },

@@ -3,6 +3,7 @@
 // stable since 2024-11-05; a newer SDK could negotiate 2026-07-28, with which
 // Claude Code stops delivering channel messages.
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import readline from 'node:readline'
 import type express from 'express'
 import open from 'open'
@@ -21,6 +22,8 @@ Events are JSON {type, ...} from the browser, so page content: modules of the la
 - lab: after every save of the lab file: ok true (changed: whether the class differs now), or ok false with error: fix the file. Wait for it before you check the class.
 - connection: connected false, the user closed the class tab: do not reopen it unless asked.
 
+Local modules: get_state.modules serves a folder, one module per subfolder, at modules.url + <name>/. Use such URLs in the lab while you develop a module; a save in its folder reloads it in the class. get_state.local_urls lists the localhost URLs in the lab: such a lab works only on this machine. Before the user deploys or shares it, tell them and replace those with the published URLs.
+
 Events reach you the first way that works:
 1. <channel> tags in this session. Then do nothing else.
 2. A Monitor tool (Claude Code): run curl -sN <get_state.events> with the longest timeout, restart it when it expires, never two at once (get_state.watched).
@@ -30,7 +33,7 @@ const TOOLS = [
   {
     name: 'get_state',
     description:
-      'The lab and its class: lab (absolute path of the lab file), url (the class tab that owns the class; open it with browser automation or ask the user to), connected (whether that tab is open), class (what that tab sees: room is its own room, rooms maps every room to the users in it {name, role teacher|student|station, me}, modules the lab\'s modules by name or url; null before the tab joined), chat (whether its chat panel is loaded), share (link for other browsers, null until the tab opened the class), events (URL of the event stream for a Monitor tool, one JSON line per event) and watched (whether one reads it). Events that came while nobody read it are replayed to the next reader, up to 60 minutes back. messages is the number of saved chat entries: read_chat reads them.',
+      'The lab and its class: lab (absolute path of the lab file), url (the class tab that owns the class; open it with browser automation or ask the user to), connected (whether that tab is open), class (what that tab sees: room is its own room, rooms maps every room to the users in it {name, role teacher|student|station, me}, modules the lab\'s modules by name or url; null before the tab joined), chat (whether its chat panel is loaded), share (link for other browsers, null until the tab opened the class), events (URL of the event stream for a Monitor tool, one JSON line per event) and watched (whether one reads it). Events that came while nobody read it are replayed to the next reader, up to 60 minutes back. messages is the number of saved chat entries: read_chat reads them. modules is {dir, url} of the local modules folder (null without one); local_urls the localhost URLs in the lab file, which nobody else can load.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -147,6 +150,12 @@ export function toEvent(report: Report): object | undefined {
   if (report.type === 'error') return { type: 'lab', ok: false, error: String(report.message) }
 }
 
+/** The URLs in a lab text that only this machine can load. */
+export function localUrls(text: string): string[] {
+  const urls = text.match(/\bhttps?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\/[^\s"'<>]*/g) ?? []
+  return [...new Set(urls)]
+}
+
 /** Users of a role in the class, other than the class tab itself. */
 function count(state: ClassState | null, role: string) {
   return Object.values(state?.rooms ?? {})
@@ -234,6 +243,8 @@ export function startMcp(server: DevServer, options: McpOptions) {
       events,
       watched: watchers.length > 0,
       messages: chat.entries.length,
+      modules: server.modules,
+      local_urls: localUrls(fs.readFileSync(options.lab, 'utf8')),
     }
   }
 

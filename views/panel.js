@@ -2,8 +2,14 @@
 // page. It lives in a shadow root on <html>: edrys-Lite mounts its app into
 // <body> again on every route, which would wipe anything put there.
 ;(function () {
-  // only the tab opened with ?dev (DevBridge keeps that in sessionStorage)
-  if (location.search !== '?dev' && !sessionStorage.getItem('edrys-dev')) return
+  // only the tab opened with ?dev (DevBridge keeps that in sessionStorage);
+  // student and station tabs only load again when a local module changed
+  if (location.search !== '?dev' && !sessionStorage.getItem('edrys-dev')) {
+    if (/^\?\/(classroom|station)\//.test(location.search)) {
+      new EventSource('/edrys-dev/reload').addEventListener('reload-module', () => location.reload())
+    }
+    return
+  }
 
   const OPEN_KEY = 'edrys-dev:chat-open'
 

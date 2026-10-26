@@ -15,6 +15,9 @@ Usage: edrys-dev [lab.yml] [options]
       --host <host>   address to listen on, default 127.0.0.1
       --local         sync on this server instead of edrys-Lite's default
                       transport (works offline)
+  -m, --modules <dir> local modules, one per subfolder, served on the next
+                      port (default ./modules next to the lab, if it exists);
+                      a save there reloads that module in the class
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
@@ -30,6 +33,7 @@ const { values, positionals } = parseArgs({
     port: { type: 'string', short: 'p', default: '3210' },
     host: { type: 'string', default: '127.0.0.1' },
     local: { type: 'boolean', default: false },
+    modules: { type: 'string', short: 'm' },
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -50,11 +54,19 @@ if (!fs.existsSync(lab)) {
   process.exit(1)
 }
 
+const nextToLab = path.join(path.dirname(lab), 'modules')
+const modules = values.modules ? path.resolve(values.modules) : fs.existsSync(nextToLab) ? nextToLab : undefined
+if (modules && !fs.statSync(modules, { throwIfNoEntry: false })?.isDirectory()) {
+  console.error(`edrys-dev: no modules folder at ${modules}`)
+  process.exit(1)
+}
+
 const server = await startDevServer({
   lab,
   port: Number(values.port),
   host: values.host,
   local: values.local,
+  modules,
 })
 
 server.bus.on('report', (report: Report) => {
@@ -72,6 +84,7 @@ const host = ['127.0.0.1', '0.0.0.0', '::'].includes(values.host) ? 'localhost' 
 const url = `http://${host}:${server.port}/?dev`
 
 say(`edrys-dev: ${lab}\n  ${url}`)
+if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}<name>/...`)
 if (values.mcp) startMcp(server, { lab, url })
 if (values.open) await open(url)
 

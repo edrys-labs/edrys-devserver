@@ -20,6 +20,17 @@ class open, share link:
 
 When the lab is done, publish `lab.yml` as usual (for example with a deploy link to https://edrys-labs.github.io).
 
+## Local modules
+
+Put modules you are writing into a `modules/` folder next to the lab, one per subfolder, and use their local address in `lab.yml`:
+
+```yaml
+modules:
+  - url: http://localhost:3211/my-module/index.html
+```
+
+edrys-dev serves that folder on the port after its own (3211 by default; another origin, as real modules have). Saving a file in `modules/my-module/` reloads that module in the class tab, without touching the others, and reloads student and station tabs. Such a lab only works on your machine: replace the local addresses with the published ones before you deploy it.
+
 ## With an AI agent (`--mcp`)
 
 With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Code starts it, edits `lab.yml` with its own file tools and hears from the browser when the class could not take the lab. Put it into the lab folder's `.mcp.json`; do not start `--mcp` yourself:
@@ -44,6 +55,7 @@ The class tab gets a chat panel (🤖, bottom right) where you and the agent tal
 | `-p, --port <port>` | `3210` | the next free port is used if it is taken |
 | `--host <host>` | `127.0.0.1` | address to listen on |
 | `--local` | off | sync on edrys-dev's own port instead of edrys-Lite's default transport |
+| `-m, --modules <dir>` | `./modules` next to the lab, if it exists | local modules, one per subfolder, see above |
 | `-o, --open` | off | open the lab in the browser |
 | `--mcp` | off | serve an AI agent over stdio, see above |
 

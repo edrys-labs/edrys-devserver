@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { watch } from 'chokidar'
 
 /**
@@ -16,6 +17,34 @@ export function watchFile(file: string, onChange: () => void, delay = 100): () =
 
   return () => {
     clearTimeout(timer)
+    return watcher.close()
+  }
+}
+
+/**
+ * Calls `onChange(name)` once per save in a folder `dir/<name>/`, i.e. per
+ * module; files directly in `dir` are no module. Returns a function that
+ * stops watching.
+ */
+export function watchModules(dir: string, onChange: (name: string) => void, delay = 100): () => Promise<void> {
+  const timers = new Map<string, NodeJS.Timeout>()
+  // hidden files and node_modules below dir; dir itself may sit in a hidden folder
+  const ignored = (file: string) =>
+    path
+      .relative(dir, file)
+      .split(path.sep)
+      .some((part) => part.startsWith('.') || part === 'node_modules')
+  const watcher = watch(dir, { ignoreInitial: true, ignored })
+
+  watcher.on('all', (_event, file) => {
+    const [name, ...rest] = path.relative(dir, file).split(path.sep)
+    if (!name || !rest.length) return
+    clearTimeout(timers.get(name))
+    timers.set(name, setTimeout(() => onChange(name), delay))
+  })
+
+  return () => {
+    timers.forEach(clearTimeout)
     return watcher.close()
   }
 }
