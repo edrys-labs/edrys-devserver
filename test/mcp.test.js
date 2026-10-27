@@ -359,8 +359,12 @@ test('read_chat returns what the panel shows, saved next to the lab', async () =
   assert.deepEqual(value.entries.at(-1).markdown, 'D?')
 
   // saved a moment later, once per burst
-  const file = path.join(dir, '.edrys-dev', 'chat.json')
-  const saved = () => JSON.parse(fs.readFileSync(file, 'utf8')).slice(-3)
+  const file = path.join(dir, '.edrys-dev', 'chats', value.id + '.json')
+  const saved = () => {
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8')).entries.slice(-3)
+    } catch {}
+  }
   for (let i = 0; i < 50 && JSON.stringify(saved()) !== JSON.stringify(value.entries); i++) {
     await new Promise((r) => setTimeout(r, 20))
   }
@@ -430,6 +434,39 @@ test('a message waits for the agent until it calls a tool', async () => {
   // the answer clears it
   await tool('chat', { markdown: 'yes' })
   assert.equal(panel.messages.filter((m) => m.type === 'status').at(-1).text, '')
+  panel.close()
+})
+
+test('a new chat in the panel is a session event, and ends a waiting form', { timeout: 10000 }, async () => {
+  const panel = await openPanel(await base())
+  await panel.until((m) => m.type === 'history')
+  const before = (await tool('get_state')).value.session
+
+  const pending = tool('chat', { markdown: 'Which room?', inputs: [{ id: 'r', type: 'buttons', options: ['1'] }] })
+  const form = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'Which room?')
+  assert.equal((await panel.post({ session: null })).status, 204)
+  assert.deepEqual((await pending).value, { ask: form.entry.ask, switched: true })
+  const event = (await tool('wait_for_event', { timeout_s: 2 })).value
+  assert.equal(event.type, 'session')
+  assert.equal(event.resumed, false)
+  assert.equal((await tool('get_state')).value.session.id, event.id)
+
+  // a late message for the chat before is refused
+  const late = await tool('chat', { markdown: 'About the room…', session: before.id })
+  assert.equal(late.isError, true)
+  assert.match(late.content[0].text, /opened another chat/)
+  assert.deepEqual((await tool('chat', { markdown: 'Hi again', session: event.id })).value, { sent: true })
+
+  // the chat before can still be read, its forms are closed
+  const old = (await tool('read_chat', { session: before.id, last: 1 })).value
+  assert.deepEqual([old.id, old.open, old.entries[0].markdown], [before.id, null, 'Which room?'])
+  assert.ok(old.chats.some((c) => c.id === before.id) && old.chats.some((c) => c.id === event.id))
+  assert.match((await tool('read_chat', { session: 'nope' })).content[0].text, /no saved chat nope/)
+
+  // and reopened
+  await panel.post({ session: before.id })
+  const back = (await tool('wait_for_event', { timeout_s: 2 })).value
+  assert.deepEqual([back.type, back.id, back.resumed], ['session', before.id, true])
   panel.close()
 })
 

@@ -49,10 +49,14 @@
     }
     .panel.open { display: flex; }
     header {
-      padding: 10px 14px; border-bottom: 1px solid var(--line);
-      font-size: 14px; font-weight: 600; display: flex; justify-content: space-between;
+      padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line);
+      font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;
     }
-    header small { font-weight: 400; color: var(--muted); }
+    header small { font-weight: 400; color: var(--muted); white-space: nowrap; }
+    header select {
+      flex: 1; min-width: 0; font-size: 13px; padding: 3px 4px; border-radius: 6px;
+      border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    }
     .log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
     .msg { max-width: 88%; padding: 8px 11px; border-radius: 10px; font-size: 14px; line-height: 1.4;
       overflow-wrap: anywhere; }
@@ -96,7 +100,12 @@
         🤖<span class="dot"></span>
       </button>
       <section class="panel" id="panel" aria-label="Agent chat">
-        <header>Agent <small>edrys-dev, only you see this</small></header>
+        <header>
+          Agent
+          <label for="sessions" hidden>Chats</label>
+          <select id="sessions"></select>
+          <small title="edrys-dev: not the class's chat">only you see this</small>
+        </header>
         <div class="log" role="log" aria-live="polite"></div>
         <div class="status" aria-live="polite"></div>
         <div class="hint" aria-live="polite"></div>
@@ -116,8 +125,36 @@
   const hintLine = root.querySelector('.hint')
   const compose = root.querySelector('.compose')
   const textarea = root.querySelector('textarea')
+  const menu = root.querySelector('#sessions')
 
   let open = null // the ask id of the form the user can still answer
+  let current = null // the chat shown, {id, title}
+  let sessions = [] // the saved chats, the one changed last first
+
+  const NEW = ''
+  // + New chat, then the chats; the current one is new until it has a file
+  function showMenu() {
+    const option = (value, text) => {
+      const o = document.createElement('option')
+      o.value = value
+      o.textContent = text
+      return o
+    }
+    const options = [option(NEW, '+ New chat')]
+    if (current && !sessions.some((s) => s.id === current.id)) options.push(option(current.id, 'New chat'))
+    for (const s of sessions) options.push(option(s.id, s.title))
+    menu.replaceChildren(...options)
+    if (current) menu.value = current.id
+  }
+
+  menu.addEventListener('change', async () => {
+    const response = await post({ session: menu.value === NEW ? null : menu.value })
+    // the server sends the chat it shows now; otherwise back to the one before
+    if (!response?.ok) {
+      showMenu()
+      notSent()
+    } else if (menu.value === NEW) showMenu()
+  })
 
   function setOpen(isOpen) {
     panel.classList.toggle('open', isOpen)
@@ -275,6 +312,9 @@
         case 'history':
           log.replaceChildren()
           open = message.open
+          current = message.session
+          sessions = message.sessions
+          showMenu()
           if (message.skipped) {
             const note = document.createElement('div')
             note.className = 'skipped'
@@ -293,6 +333,10 @@
           break
         case 'status':
           statusLine.textContent = message.text
+          break
+        case 'sessions':
+          sessions = message.sessions
+          showMenu()
           break
         case 'hint':
           hintLine.textContent = message.text

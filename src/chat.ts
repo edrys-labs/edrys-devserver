@@ -22,8 +22,16 @@ export type Entry = { t: number; n: number } & (
   | { type: 'answer'; ask: string; values: Record<string, string | string[]> }
 )
 
-// what the saved chat keeps, oldest first out
+/** One chat: the menu of the panel switches between them. */
+export type Session = { id: string; created: number; entries: Entry[] }
+/** What the menu shows of a saved chat. */
+export type Summary = { id: string; title: string; updated: number; count: number }
+
+// what a saved chat keeps, oldest first out
 const MAX_ENTRIES = 500
+
+// ids become file names
+const ID = /^[\w-]{1,64}$/
 
 // what a panel gets on (re)load, in characters of JSON: 500 long messages
 // could be 25 MB; read_chat has the rest
@@ -60,17 +68,62 @@ export function validAnswer(inputs: Input[], values: any): Record<string, string
   return values
 }
 
+// UTC time and a random part: sorted by time, and no clash between two runs
+function newId(t = Date.now()) {
+  return new Date(t).toISOString().slice(0, 19).replace(/:/g, '-') + '-' + crypto.randomBytes(2).toString('hex')
+}
+
 /**
- * The agent chat over the class tab: its history, saved next to the lab in
- * .edrys-dev/chat.json, and the panel's endpoints. Not the class's own
- * (signed) chat: only the author and the agent see it.
+ * The entries of a saved list, numbered upwards also if an older edrys-dev
+ * saved them without numbers; [] for a file edited by hand or of another tool.
+ */
+function readEntries(list: unknown): Entry[] {
+  if (!Array.isArray(list)) return []
+  const entries = list.filter((e) => e && typeof e === 'object' && typeof e.type === 'string').slice(-MAX_ENTRIES)
+  let next = 1
+  for (const entry of entries) {
+    if (!Number.isInteger(entry.n) || entry.n < next) entry.n = next
+    next = entry.n + 1
+  }
+  return entries
+}
+
+/** The first message of the user, else the first line of the agent, else the date. */
+export function title(session: Session): string {
+  const user = session.entries.find((e) => e.type === 'user')
+  const ai = session.entries.find((e) => e.type === 'ai')
+  let text = user?.type === 'user' ? user.text : ''
+  if (!text && ai?.type === 'ai') {
+    text = ai.markdown.split('\n').map((line) => line.replace(/[#*_`>]/g, '').trim()).find(Boolean) ?? ''
+  }
+  text = text.replace(/\s+/g, ' ').trim()
+  if (!text) return new Date(session.created).toISOString().slice(0, 16).replace('T', ' ')
+  return text.length > 60 ? text.slice(0, 59) + '…' : text
+}
+
+function summary(session: Session): Summary {
+  return {
+    id: session.id,
+    title: title(session),
+    updated: session.entries.at(-1)?.t ?? session.created,
+    count: session.entries.length,
+  }
+}
+
+/**
+ * The agent chat over the class tab: its chats, saved next to the lab in
+ * .edrys-dev/chats/<id>.json, and the panel's endpoints. Not the class's own
+ * (signed) chat: only the author and the agent see it. It continues the chat
+ * that changed last; a new one gets its file with its first entry.
  *
  * Emits `user` (entry) when the user typed, `answer` (entry) when they
- * answered a form, and `connection` (boolean) when the panel came, or was
- * gone for `settleMs`: a reload of the class tab is no going.
+ * answered a form, `session` ({id, title, resumed}) when they opened another
+ * chat, and `connection` (boolean) when the panel came, or was gone for
+ * `settleMs`: a reload of the class tab is no going.
  */
 export class Chat extends EventEmitter {
-  entries: Entry[] = []
+  /** The chat the panel shows. */
+  session: Session
   /** The one form the user can still answer. Forms of earlier runs are closed. */
   open: string | null = null
   /** The inputs of the open form. */
@@ -85,22 +138,103 @@ export class Chat extends EventEmitter {
   private reported = false
   private settling: NodeJS.Timeout | undefined
   private saveTimer: NodeJS.Timeout | undefined
+  // chats with entries not saved yet
+  private dirty = new Set<Session>()
   // one write after the other, never two at once into the same file
   private saving = Promise.resolve()
+  private dir: string
+  // the saved chats, for the menu
+  private summaries = new Map<string, Summary>()
+  // the chats read in this run: a file may still lag behind them
+  private loaded = new Map<string, Session>()
 
-  constructor(private file: string, private settleMs = 0, private hintMs = HINT_MS) {
+  /** `folder` is .edrys-dev next to the lab. */
+  constructor(folder: string, private settleMs = 0, private hintMs = HINT_MS) {
     super()
+    this.dir = path.join(folder, 'chats')
+    this.migrate(path.join(folder, 'chat.json'))
+    let names: string[] = []
     try {
-      const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
-      // a file edited by hand, or of another tool
-      if (Array.isArray(saved)) {
-        this.entries = saved.filter((e) => e && typeof e === 'object' && typeof e.type === 'string').slice(-MAX_ENTRIES)
-      }
+      names = fs.readdirSync(this.dir)
     } catch {}
-    // numbers that go up, also in a chat of an older edrys-dev without them
-    for (const entry of this.entries) {
-      if (!Number.isInteger(entry.n) || entry.n < this.next) entry.n = this.next
-      this.next = entry.n + 1
+    for (const name of names) {
+      const session = name.endsWith('.json') && this.load(name.slice(0, -5))
+      if (session) this.summaries.set(session.id, summary(session))
+    }
+    const latest = this.list()[0]
+    this.session = (latest && this.load(latest.id)) || { id: newId(), created: Date.now(), entries: [] }
+    this.next = (this.session.entries.at(-1)?.n ?? 0) + 1
+  }
+
+  /** The entries of the chat the panel shows. */
+  get entries(): Entry[] {
+    return this.session.entries
+  }
+
+  /** The saved chats, the one changed last first. */
+  list(): Summary[] {
+    return [...this.summaries.values()].sort((a, b) => b.updated - a.updated)
+  }
+
+  /** The chat `id`, the current one without; undefined if there is none. */
+  read(id?: string): Session | undefined {
+    return id === undefined || id === this.session.id ? this.session : this.load(id)
+  }
+
+  /**
+   * Shows the saved chat `id`, or with null a new one (unless the current one
+   * is new still). False if there is no such chat.
+   */
+  switchTo(id: string | null): boolean {
+    let next: Session | undefined
+    if (id === null) {
+      if (!this.session.entries.length) return true
+      next = { id: newId(), created: Date.now(), entries: [] }
+    } else {
+      if (id === this.session.id) return true
+      next = this.summaries.has(id) ? this.load(id) : undefined
+      if (!next) return false
+    }
+    // the forms and the progress line belong to the chat before
+    this.open = null
+    this.form = []
+    this.pending = false
+    this.status = this.hint = ''
+    clearTimeout(this.quiet)
+    this.session = next
+    this.next = (next.entries.at(-1)?.n ?? 0) + 1
+    const history = `data: ${JSON.stringify(this.history())}\n\n`
+    for (const panel of this.panels) panel.write(history)
+    this.emit('session', { id: next.id, title: title(next), resumed: next.entries.length > 0 })
+    return true
+  }
+
+  // the chat.json of an older edrys-dev becomes the first saved chat
+  private migrate(file: string) {
+    try {
+      const entries = readEntries(JSON.parse(fs.readFileSync(file, 'utf8')))
+      if (!entries.length) return
+      const session = { id: newId(entries[0].t), created: entries[0].t, entries }
+      fs.mkdirSync(this.dir, { recursive: true })
+      fs.writeFileSync(path.join(this.dir, session.id + '.json'), JSON.stringify(session))
+      fs.rmSync(file)
+    } catch {}
+  }
+
+  private load(id: string): Session | undefined {
+    if (!ID.test(id)) return undefined
+    const known = this.loaded.get(id)
+    if (known) return known
+    try {
+      const saved = JSON.parse(fs.readFileSync(path.join(this.dir, id + '.json'), 'utf8'))
+      if (saved?.id !== id || !Array.isArray(saved.entries)) return undefined
+      const entries = readEntries(saved.entries)
+      const created = Number.isFinite(saved.created) ? saved.created : entries[0]?.t ?? 0
+      const session = { id, created, entries }
+      this.loaded.set(id, session)
+      return session
+    } catch {
+      return undefined
     }
   }
 
@@ -180,10 +314,7 @@ export class Chat extends EventEmitter {
         Connection: 'keep-alive',
       })
       // a reload shows the chat again, with the open form and status
-      const entries = this.recent()
-      const skipped = this.entries.length - entries.length
-      const history = { type: 'history', entries, skipped, open: this.open, status: this.status, hint: this.hint }
-      res.write(`data: ${JSON.stringify(history)}\n\n`)
+      res.write(`data: ${JSON.stringify(this.history())}\n\n`)
       this.panels.add(res)
       clearTimeout(this.settling)
       if (!this.reported) this.emit('connection', (this.reported = true))
@@ -200,6 +331,13 @@ export class Chat extends EventEmitter {
     app.post('/edrys-dev/chat', express.json(), (req, res) => {
       if (!sameOrigin(req)) return res.sendStatus(403)
       const { text, ask, values } = req.body ?? {}
+
+      // the menu: another saved chat, or null for a new one
+      if (req.body && Object.hasOwn(req.body, 'session')) {
+        const { session } = req.body
+        if (session !== null && typeof session !== 'string') return res.sendStatus(400)
+        return res.sendStatus(this.switchTo(session) ? 204 : 404)
+      }
 
       if (typeof text === 'string' && text.trim()) {
         const entry: Entry = { t: Date.now(), n: this.next++, type: 'user', text: text.slice(0, 10000) }
@@ -225,10 +363,31 @@ export class Chat extends EventEmitter {
   }
 
   private add(entry: Entry) {
-    this.entries.push(entry)
-    if (this.entries.length > MAX_ENTRIES) this.entries.splice(0, this.entries.length - MAX_ENTRIES)
+    const session = this.session
+    session.entries.push(entry)
+    if (session.entries.length > MAX_ENTRIES) session.entries.splice(0, session.entries.length - MAX_ENTRIES)
+    this.loaded.set(session.id, session)
     this.send({ type: 'entry', entry })
+    // the menu changes with a new chat's first entry, or its first message of the user
+    const before = this.summaries.get(session.id)?.title
+    this.summaries.set(session.id, summary(session))
+    if (this.summaries.get(session.id)!.title !== before) this.send({ type: 'sessions', sessions: this.list() })
     this.save()
+  }
+
+  // what a panel gets first, and after a switch
+  private history() {
+    const entries = this.recent()
+    return {
+      type: 'history',
+      session: { id: this.session.id, title: title(this.session) },
+      sessions: this.list(),
+      entries,
+      skipped: this.entries.length - entries.length,
+      open: this.open,
+      status: this.status,
+      hint: this.hint,
+    }
   }
 
   private send(message: object) {
@@ -248,28 +407,33 @@ export class Chat extends EventEmitter {
   }
 
   private save() {
-    this.saveTimer ??= setTimeout(() => {
-      this.saveTimer = undefined
-      this.saving = this.saving.then(() => this.write())
-    }, SAVE_MS)
+    this.dirty.add(this.session)
+    this.saveTimer ??= setTimeout(() => this.writeDirty(), SAVE_MS)
+  }
+
+  private writeDirty() {
+    clearTimeout(this.saveTimer)
+    this.saveTimer = undefined
+    const sessions = [...this.dirty]
+    this.dirty.clear()
+    this.saving = this.saving.then(async () => {
+      for (const session of sessions) await this.write(session)
+    })
   }
 
   /** Writes what is not saved yet, e.g. before edrys-dev exits. */
   async flush() {
-    if (this.saveTimer) {
-      clearTimeout(this.saveTimer)
-      this.saveTimer = undefined
-      this.saving = this.saving.then(() => this.write())
-    }
+    if (this.saveTimer) this.writeDirty()
     await this.saving
   }
 
   // a copy renamed over the file: a crash midway leaves the old chat, not half a one
-  private async write() {
+  private async write(session: Session) {
+    const file = path.join(this.dir, session.id + '.json')
     try {
-      await fsp.mkdir(path.dirname(this.file), { recursive: true })
-      await fsp.writeFile(this.file + '.tmp', JSON.stringify(this.entries))
-      await fsp.rename(this.file + '.tmp', this.file)
+      await fsp.mkdir(this.dir, { recursive: true })
+      await fsp.writeFile(file + '.tmp', JSON.stringify(session))
+      await fsp.rename(file + '.tmp', file)
     } catch (error: any) {
       console.error('edrys-dev: could not save the chat:', error.message)
     }

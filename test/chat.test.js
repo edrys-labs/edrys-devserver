@@ -68,7 +68,7 @@ test('an answer has only the ids and options of its form', () => {
 })
 
 test('a forged answer is refused and leaves the form open', async () => {
-  const chat = new Chat(path.join(dir, 'answer', 'chat.json'))
+  const chat = new Chat(path.join(dir, 'answer'))
   const panel = await serve(chat)
   const answers = []
   chat.on('answer', (entry) => answers.push(entry.values))
@@ -84,28 +84,39 @@ test('a forged answer is refused and leaves the form open', async () => {
   }
 })
 
-test('a chat.json that is no list of entries starts an empty chat', () => {
+// a chat.json of an older edrys-dev in a folder of its own
+function oldChat(name, text) {
+  const folder = path.join(dir, name)
+  fs.mkdirSync(folder)
+  fs.writeFileSync(path.join(folder, 'chat.json'), text)
+  return folder
+}
+
+test('a chat.json of an older edrys-dev becomes the first saved chat', async () => {
+  const folder = oldChat('old', JSON.stringify([{ t: Date.UTC(2026, 9, 1), type: 'user', text: 'Why does Execute do nothing?' }]))
+  const chat = new Chat(folder)
+  assert.equal(fs.existsSync(path.join(folder, 'chat.json')), false)
+  assert.deepEqual(chat.entries.map((e) => e.text), ['Why does Execute do nothing?'])
+  assert.match(chat.session.id, /^2026-10-01T00-00-00-[0-9a-f]{4}$/)
+  assert.deepEqual(chat.list().map((s) => [s.id, s.title, s.count]), [[chat.session.id, 'Why does Execute do nothing?', 1]])
+  assert.ok(fs.existsSync(path.join(folder, 'chats', chat.session.id + '.json')))
+
+  // one that is no list of entries is left alone, the chat starts empty
   for (const [name, text] of [
     ['object', '{"entries": []}'],
     ['string', '"hello"'],
     ['broken', '[{"t": 1, '],
   ]) {
-    const file = path.join(dir, name, 'chat.json')
-    fs.mkdirSync(path.dirname(file))
-    fs.writeFileSync(file, text)
-    assert.deepEqual(new Chat(file).entries, [], name)
+    assert.deepEqual(new Chat(oldChat(name, text)).entries, [], name)
   }
-  const file = path.join(dir, 'mixed', 'chat.json')
-  fs.mkdirSync(path.dirname(file))
-  fs.writeFileSync(file, JSON.stringify([null, 3, { t: 1, type: 'user', text: 'hi' }]))
-  assert.deepEqual(new Chat(file).entries, [{ t: 1, type: 'user', text: 'hi', n: 1 }])
+  assert.deepEqual(new Chat(oldChat('mixed', JSON.stringify([null, 3, { t: 1, type: 'user', text: 'hi' }]))).entries, [
+    { t: 1, type: 'user', text: 'hi', n: 1 },
+  ])
 })
 
 test('entries are numbered, also those of a chat saved without numbers', async () => {
-  const file = path.join(dir, 'numbers', 'chat.json')
-  fs.mkdirSync(path.dirname(file))
-  fs.writeFileSync(file, JSON.stringify([{ t: 1, type: 'user', text: 'a' }, { t: 2, type: 'ai', markdown: 'b', n: 7 }, { t: 3, type: 'user', text: 'c', n: 2 }]))
-  const chat = new Chat(file)
+  const folder = oldChat('numbers', JSON.stringify([{ t: 1, type: 'user', text: 'a' }, { t: 2, type: 'ai', markdown: 'b', n: 7 }, { t: 3, type: 'user', text: 'c', n: 2 }]))
+  const chat = new Chat(folder)
   assert.deepEqual(chat.entries.map((e) => e.n), [1, 7, 8])
   chat.say('d')
   assert.equal(chat.entries.at(-1).n, 9)
@@ -114,7 +125,7 @@ test('entries are numbered, also those of a chat saved without numbers', async (
 })
 
 test('the status line waits for the agent and says when it does not react', async () => {
-  const chat = new Chat(path.join(dir, 'hints', 'chat.json'), 0, { noReaction: 50, quiet: 100 })
+  const chat = new Chat(path.join(dir, 'hints'), 0, { noReaction: 50, quiet: 100 })
   const panel = await serve(chat)
   try {
     await panel.post({ text: 'hello?' })
@@ -141,19 +152,71 @@ test('the status line waits for the agent and says when it does not react', asyn
 })
 
 test('a burst of messages is saved once, later, and all of it on flush', async () => {
-  const file = path.join(dir, 'burst', 'chat.json')
-  const chat = new Chat(file)
+  const folder = path.join(dir, 'burst')
+  const chat = new Chat(folder)
+  const file = path.join(folder, 'chats', chat.session.id + '.json')
   for (let i = 0; i < 20; i++) chat.say('message ' + i)
   assert.equal(fs.existsSync(file), false)
   await chat.flush()
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).length, 20)
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).entries.length, 20)
   assert.equal(fs.existsSync(file + '.tmp'), false)
   // and it comes back
-  assert.equal(new Chat(file).entries.length, 20)
+  assert.equal(new Chat(folder).entries.length, 20)
+})
+
+test('the menu starts a new chat, reopens an old one, and a restart continues the last', async () => {
+  const folder = path.join(dir, 'sessions')
+  const chat = new Chat(folder)
+  const panel = await serve(chat)
+  const events = []
+  chat.on('session', (event) => events.push(event))
+  try {
+    // a new chat that is still empty stays the same, and has no file
+    const first = chat.session.id
+    assert.equal((await panel.post({ session: null })).status, 204)
+    assert.equal(chat.session.id, first)
+    assert.deepEqual(chat.list(), [])
+
+    await panel.post({ text: 'Why does Execute do nothing?' })
+    const ask = chat.say('Which board?', INPUTS)
+    assert.equal((await panel.post({ session: null })).status, 204)
+    const second = chat.session.id
+    assert.notEqual(second, first)
+    assert.equal(chat.open, null)
+    assert.deepEqual(events.at(-1), { id: second, title: (await panel.history()).session.title, resumed: false })
+    // the form stayed in the chat before
+    assert.equal((await panel.post({ ask, values: { board: 'Uno' } })).status, 409)
+
+    await panel.post({ text: 'Add a terminal' })
+    let history = await panel.history()
+    assert.deepEqual(history.sessions.map((s) => s.title), ['Add a terminal', 'Why does Execute do nothing?'])
+    assert.equal(history.status, 'Waiting for the agent…')
+
+    // back to the first: its entries, no status of the other
+    assert.equal((await panel.post({ session: first })).status, 204)
+    history = await panel.history()
+    assert.equal(history.session.id, first)
+    assert.deepEqual(history.entries.map((e) => e.text ?? e.markdown), ['Why does Execute do nothing?', 'Which board?'])
+    assert.deepEqual([history.open, history.status], [null, ''])
+    assert.deepEqual(events.at(-1), { id: first, title: 'Why does Execute do nothing?', resumed: true })
+    assert.equal(chat.read(second).entries.length, 1)
+
+    assert.equal((await panel.post({ session: 'no-such-chat' })).status, 404)
+    assert.equal((await panel.post({ session: '../../lab' })).status, 404)
+    assert.equal((await panel.post({ session: 3 })).status, 400)
+
+    // a restart continues the one changed last
+    await panel.post({ text: 'still the first' })
+    await chat.flush()
+    assert.equal(new Chat(folder).session.id, first)
+  } finally {
+    await panel.close()
+    await chat.flush()
+  }
 })
 
 test('a panel gets the newest messages that fit, and the count of the others', async () => {
-  const chat = new Chat(path.join(dir, 'large', 'chat.json'))
+  const chat = new Chat(path.join(dir, 'large'))
   const panel = await serve(chat)
   try {
     for (let i = 0; i < 30; i++) chat.say(i + 'x'.repeat(49_000))

@@ -228,7 +228,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     res.sendStatus(204)
   })
 
-  const chat = new Chat(path.join(path.dirname(options.lab), '.edrys-dev', 'chat.json'), SETTLE_MS)
+  const chat = new Chat(path.join(path.dirname(options.lab), '.edrys-dev'), SETTLE_MS)
   // without an agent, nobody would answer
   if (options.agent) chat.routes(app)
   panelFiles(app)
