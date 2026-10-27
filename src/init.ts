@@ -25,6 +25,7 @@ modules:
 
         Open the 🤖 chat (bottom right) and tell the agent what this lab should do.
     width: full
+    height: tall
 `
 
 const agents = (name: string) => `# ${name}

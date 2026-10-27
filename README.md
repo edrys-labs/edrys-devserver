@@ -22,6 +22,7 @@ You need [Node.js](https://nodejs.org) 20 or newer.
 
            Edit lab.yml, save it, and watch this text change.
        width: full
+       height: tall
    ```
 
 2. Start edrys-dev in that folder:

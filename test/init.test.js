@@ -24,6 +24,8 @@ test('init sets up a new folder for an agent', () => {
   const read = (file) => fs.readFileSync(path.join(lab, file), 'utf8')
 
   assert.match(read('lab.yml'), /^name: "My lab: one"\n/)
+  // without a height, edrys-Lite makes it 200px high
+  assert.match(read('lab.yml'), /\n {4}width: full\n {4}height: tall\n$/)
   const args = ['-y', '@edryslabs/edrys-dev', '--mcp', 'lab.yml']
   assert.deepEqual(JSON.parse(read('.mcp.json')).mcpServers.edrys, { command: 'npx', args })
   assert.deepEqual(JSON.parse(read('.vscode/mcp.json')).servers.edrys, { type: 'stdio', command: 'npx', args })
