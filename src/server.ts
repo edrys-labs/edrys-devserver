@@ -8,7 +8,7 @@ import express from 'express'
 import { unpack } from 'msgpackr'
 import { watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
-import { sameOrigin } from './origin.js'
+import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, panelFiles, panelScript } from './chat.js'
 
 export type Report = { type: string; [key: string]: any }
@@ -111,6 +111,9 @@ export function edrysDist(): string {
  */
 export async function startDevServer(options: DevServerOptions): Promise<DevServer> {
   const app = express()
+  // a page that rebinds its own domain to this machine would pass sameOrigin
+  const names = hostNames(options.host)
+  app.use(hostGuard(names))
   const bus = new EventEmitter()
   const clients = new Set<express.Response>()
   let share: string | null = null
@@ -198,10 +201,15 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   })
 
   // The error reporter of local modules (see modules.ts): from the module
-  // server's origin, or "null" for a module edrys-Lite inlined.
+  // server's origin, or "null" for a module edrys-Lite inlined. Any page can
+  // be "null" (a sandboxed frame), so the reporter also carries the token,
+  // which only local module pages hold.
   let moduleOrigins: string[] = []
-  app.post('/edrys-dev/module-error', express.text({ type: () => true }), (req, res) => {
-    if (!moduleOrigins.includes(String(req.headers.origin))) return res.sendStatus(403)
+  const reportToken = crypto.randomBytes(16).toString('hex')
+  app.post('/edrys-dev/module-error/:token', express.text({ type: () => true }), (req, res) => {
+    if (req.params.token !== reportToken || !moduleOrigins.includes(String(req.headers.origin))) {
+      return res.sendStatus(403)
+    }
     let error: any
     try {
       error = JSON.parse(req.body)
@@ -235,7 +243,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   const server = http.createServer(app)
   // Loaded only when used: @edryslabs/websocket-server is an optional dependency.
-  const stopSync = options.local ? (await import('./sync.js')).attachSync(server) : () => {}
+  const stopSync = options.local ? (await import('./sync.js')).attachSync(server, names) : () => {}
   const send = (event: string, data: object) => {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
   }
@@ -266,7 +274,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     // the class tab may use either local address
     const pageOrigins = [...new Set(['localhost', '127.0.0.1', options.host].map((host) => `http://${host}:${port}`))]
     const moduleServer = http.createServer(
-      moduleApp(dir, `http://localhost:${port}/edrys-dev/module-error`, pageOrigins)
+      moduleApp(dir, `http://localhost:${port}/edrys-dev/module-error/${reportToken}`, pageOrigins, names)
     )
     const modulePort = await listen(moduleServer, port + 1, options.host)
     modules = { dir, url: `http://localhost:${modulePort}/` }

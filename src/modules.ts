@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import express from 'express'
+import { hostGuard } from './origin.js'
 
 /**
  * Reports a module's uncaught errors, rejected promises and console.error to
@@ -104,12 +105,14 @@ export function inject(html: string, script: string): string {
  * edrys-Lite's origin could read its storage, the owner's key included. Real
  * modules always come from another origin, so these do too. HTML pages get
  * the error reporter, which posts to `reportUrl`, and the runner, which takes
- * code from edrys-Lite at `pageOrigins`.
+ * code from edrys-Lite at `pageOrigins`. `names` are the host names it answers
+ * to (see hostGuard).
  */
-export function moduleApp(dir: string, reportUrl: string, pageOrigins: string[]): express.Express {
+export function moduleApp(dir: string, reportUrl: string, pageOrigins: string[], names: string[]): express.Express {
   const app = express()
+  app.use(hostGuard(names))
   app.use((req, res, next) => {
-    // edrys-Lite fetches a module from its own origin to read its meta tags
+    // other pages may load a module's scripts and styles, as with real modules
     res.setHeader('Access-Control-Allow-Origin', '*')
     // a reload must get the files as they are now
     res.setHeader('Cache-Control', 'no-store')
@@ -122,6 +125,12 @@ export function moduleApp(dir: string, reportUrl: string, pageOrigins: string[])
     if (!file.startsWith(dir + path.sep) || !name) return next()
     try {
       const html = await fs.readFile(file, 'utf8')
+      // edrys-Lite fetches a module from its own origin to read its meta tags;
+      // nobody else may read the page, it carries the reporter's token
+      const origin = String(req.headers.origin)
+      if (pageOrigins.includes(origin)) res.setHeader('Access-Control-Allow-Origin', origin)
+      else res.removeHeader('Access-Control-Allow-Origin')
+      res.setHeader('Vary', 'Origin')
       res.type('html').send(inject(html, errorReporter(name, reportUrl) + runner(pageOrigins)))
     } catch {
       next()

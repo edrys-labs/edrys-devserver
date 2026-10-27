@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util'
 import open from 'open'
 import { startDevServer, type Report } from './server.js'
 import { startMcp } from './mcp.js'
+import { reachable } from './origin.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -12,7 +13,9 @@ Usage: edrys-dev [lab.yml] [options]
 
   -i, --input <file>  lab file (YAML or JSON), default ./lab.yml
   -p, --port <port>   port, default 3210 (the next free one if taken)
-      --host <host>   address to listen on, default 127.0.0.1
+      --host <host>   address to listen on, default 127.0.0.1; another one
+                      (e.g. 0.0.0.0) lets others on the network in, with
+                      --mcp also into the agent chat
       --local         sync on this server instead of edrys-Lite's default
                       transport (works offline)
   -m, --modules <dir> local modules, one per subfolder, served on the next
@@ -86,6 +89,12 @@ const url = `http://${host}:${server.port}/?dev`
 
 say(`edrys-dev: ${lab}\n  ${url}`)
 if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}<name>/...`)
+if (reachable(values.host)) {
+  console.error(
+    `edrys-dev: listening on ${values.host}, not only on this machine: others on the network can open the class` +
+      (values.mcp ? ' and type to the agent in its chat' : '')
+  )
+}
 if (values.mcp) startMcp(server, { lab, url })
 if (values.open) await open(url)
 

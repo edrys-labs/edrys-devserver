@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
+import http from 'node:http'
 import { spawn } from 'node:child_process'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-mcp-'))
@@ -80,7 +81,7 @@ test('a lab error reaches the agent on every path', async () => {
 
   await fetch(base + '/edrys-dev/bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: base },
     body: JSON.stringify({ type: 'error', message: 'not a classroom' }),
   })
   const expected = { type: 'lab', ok: false, error: 'not a classroom' }
@@ -138,7 +139,7 @@ async function openPanel(base) {
   const post = (body) =>
     fetch(base + '/edrys-dev/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: base },
       body: JSON.stringify(body),
     })
   const until = async (test) => {
@@ -238,13 +239,35 @@ test('read_chat returns what the panel shows, saved next to the lab', async () =
   assert.deepEqual(saved.slice(-3), value.entries)
 })
 
-test('the chat refuses posts from other origins', async () => {
-  const response = await fetch((await base()) + '/edrys-dev/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'https://some-module.example' },
-    body: JSON.stringify({ text: 'forged' }),
+// a POST with headers fetch would not let through as they are (Host)
+function rawPost(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } })
+    request.on('response', (response) => resolve(response.statusCode))
+    request.on('error', reject)
+    request.end(body)
   })
-  assert.equal(response.status, 403)
+}
+
+test('the chat takes posts from its own page only, not from other sites or programs', async () => {
+  const url = (await base()) + '/edrys-dev/chat'
+  const port = new URL(url).port
+  const body = JSON.stringify({ text: 'forged' })
+  const before = notifications.length
+
+  // a module's own site
+  assert.equal(await rawPost(url, { Origin: 'https://some-module.example' }, body), 403)
+  // another program, or another user of this machine
+  assert.equal(await rawPost(url, {}, body), 403)
+  // a site that rebinds its domain to 127.0.0.1: Host and Origin agree
+  const evil = `evil.example:${port}`
+  assert.equal(await rawPost(url, { Host: evil, Origin: `http://${evil}` }, body), 403)
+  // nor may it read the chat or the lab
+  assert.equal(await new Promise((resolve) => http.get(url + '/events', { headers: { Host: evil } }, (r) => resolve(r.statusCode))), 403)
+
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(notifications.slice(before).filter((n) => n.params?.content?.includes('forged')).length, 0)
+  assert.ok(!(await tool('read_chat')).value.entries.some((e) => e.text === 'forged'))
 })
 
 // The class tab's side: its command stream and its reports.
@@ -275,7 +298,7 @@ async function openClassTab(origin) {
   const report = (body) =>
     fetch(origin + '/edrys-dev/bridge', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Origin: origin },
       body: JSON.stringify(body),
     })
   return { commands, report, close: () => controller.abort() }
@@ -424,7 +447,7 @@ test('read_messages filters what the modules did', async () => {
   const origin = await base()
   await fetch(origin + '/edrys-dev/bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: origin },
     body: JSON.stringify({
       type: 'messages',
       messages: [

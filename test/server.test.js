@@ -6,6 +6,7 @@ import path from 'node:path'
 import http from 'node:http'
 import WebSocket from 'ws'
 import { startDevServer } from '../dist/server.js'
+import { hostNames } from '../dist/origin.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-'))
 const lab = path.join(dir, 'lab.yml')
@@ -72,7 +73,7 @@ test('sends reload-lab once per save', async () => {
 test('passes browser reports on', async () => {
   const response = await fetch(base + '/edrys-dev/bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: base },
     body: JSON.stringify({ type: 'open', url: 'x' }),
   })
   assert.equal(response.status, 204)
@@ -80,14 +81,32 @@ test('passes browser reports on', async () => {
   assert.equal(server.state().share, 'x')
 })
 
-test('refuses reports from pages of another origin', async () => {
-  const response = await fetch(base + '/edrys-dev/bridge', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'https://some-module.example' },
-    body: JSON.stringify({ type: 'open', url: 'forged' }),
-  })
-  assert.equal(response.status, 403)
+test('refuses reports from pages of another origin, and from programs', async () => {
+  for (const headers of [{ Origin: 'https://some-module.example' }, {}]) {
+    const response = await fetch(base + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ type: 'open', url: 'forged' }),
+    })
+    assert.equal(response.status, 403)
+  }
   assert.notEqual(server.state().share, 'forged')
+})
+
+test('answers only to its own host names, not to a domain rebound to 127.0.0.1', async () => {
+  const get = (host) =>
+    new Promise((resolve) => http.get(base + '/edrys-dev/lab', { headers: { Host: host } }, (r) => resolve(r.statusCode)))
+  assert.equal(await get(`localhost:${server.port}`), 200)
+  assert.equal(await get(`127.0.0.1:${server.port}`), 200)
+  assert.equal(await get(`evil.example:${server.port}`), 403)
+  assert.equal(await get('localhost:1'), 403)
+
+  // on all interfaces, also their addresses
+  const names = hostNames('0.0.0.0')
+  for (const { address, family } of Object.values(os.networkInterfaces()).flat()) {
+    assert.ok(names.includes(family === 'IPv6' ? `[${address}]` : address), address)
+  }
+  assert.deepEqual(hostNames('127.0.0.1'), ['localhost', '127.0.0.1', '[::1]'])
 })
 
 test('reports the owner tab coming and going, not a quick reload', async () => {
@@ -121,13 +140,25 @@ test('--local: syncs Yjs docs on the same port and points the class there', asyn
     })
 
     // A Yjs doc answers right away with its sync step 1.
-    const ws = new WebSocket(`ws://127.0.0.1:${local.port}/some-class`)
-    const first = await new Promise((resolve, reject) => {
-      ws.on('message', resolve)
-      ws.on('error', reject)
-    })
-    ws.close()
-    assert.equal(new Uint8Array(first)[0], 0) // messageSync
+    const connect = (url, origin) => {
+      const ws = new WebSocket(url, origin ? { origin } : {})
+      return new Promise((resolve, reject) => {
+        ws.on('message', (first) => {
+          ws.close()
+          resolve(new Uint8Array(first)[0])
+        })
+        ws.on('error', reject)
+      })
+    }
+    const page = `http://127.0.0.1:${local.port}`
+    assert.equal(await connect(`ws://127.0.0.1:${local.port}/some-class`, page), 0) // messageSync
+    // a student tab on the other local address, with the owner's link
+    assert.equal(await connect(`ws://localhost:${local.port}/some-class`, page), 0)
+
+    // any site may open a WebSocket, but not to edrys-dev; nor a program
+    for (const origin of ['https://evil.example', `http://evil.example:${local.port}`, undefined]) {
+      await assert.rejects(connect(`ws://127.0.0.1:${local.port}/some-class`, origin), /403/, String(origin))
+    }
   } finally {
     await local.close()
   }

@@ -50,7 +50,7 @@ With edrys-dev installed globally, `"command": "edrys-dev", "args": ["--mcp", "l
 
 Tools: `get_state` (lab file, class URL, share link, the class: rooms, users, modules), `goto` (move the class tab to a room, open a student or station tab), `chat` and `read_chat`, `read_messages` (module messages the class tab saw, and errors of local modules), `read_module_state` (what the modules share in a room), `run_in_module` (JavaScript in a local module's frame, only when you ask for it), `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
 
-The class tab gets a chat panel (🤖, bottom right) where you and the agent talk; it is not the class's own chat, nobody else sees it. The agent can ask with buttons or checkboxes there. The chat is saved in `.edrys-dev/chat.json` next to the lab, so a restarted agent can read it; add `.edrys-dev/` to the lab's `.gitignore`.
+The class tab gets a chat panel (🤖, bottom right) where you and the agent talk; it is not the class's own chat, nobody else sees it. The agent can ask with buttons or checkboxes there. edrys-dev only takes chat messages from its own page, opened at a local address (`localhost`, `127.0.0.1`), so other websites and other programs cannot write to the agent as you; keep `--host` at its default for that. The chat is saved in `.edrys-dev/chat.json` next to the lab, so a restarted agent can read it; add `.edrys-dev/` to the lab's `.gitignore`.
 
 The tools show the agent whether the lab works; what to write comes from the [edrys skills](https://github.com/edrys-labs/skills), recommended with edrys-dev: `edrys-lab` for labs, `edrys-module` for modules. Both say how to use edrys-dev when it is connected.
 
@@ -64,7 +64,7 @@ npx skills add edrys-labs/skills
 |---|---|---|
 | `[lab.yml]`, `-i, --input <file>` | `./lab.yml` | lab file, YAML or JSON |
 | `-p, --port <port>` | `3210` | the next free port is used if it is taken |
-| `--host <host>` | `127.0.0.1` | address to listen on |
+| `--host <host>` | `127.0.0.1` | address to listen on; another one (e.g. `0.0.0.0`) lets others on the network open the class, and with `--mcp` type to the agent in its chat |
 | `--local` | off | sync on edrys-dev's own port instead of edrys-Lite's default transport |
 | `-m, --modules <dir>` | `./modules` next to the lab, if it exists | local modules, one per subfolder, see above |
 | `-o, --open` | off | open the lab in the browser |

@@ -46,10 +46,11 @@ async function listen(url) {
 
 test('serves local modules on the next port, for other origins, never cached', async () => {
   assert.deepEqual(server.modules, { dir: modules, url: `http://localhost:${server.port + 1}/` })
-  const response = await fetch(`http://127.0.0.1:${server.port + 1}/term/index.html`)
+  const page = `http://localhost:${server.port}`
+  const response = await fetch(`http://127.0.0.1:${server.port + 1}/term/index.html`, { headers: { Origin: page } })
   assert.equal(response.status, 200)
   assert.match(await response.text(), /<title>Term<\/title>$/)
-  assert.equal(response.headers.get('access-control-allow-origin'), '*')
+  assert.equal(response.headers.get('access-control-allow-origin'), page)
   assert.equal(response.headers.get('cache-control'), 'no-store')
 })
 
@@ -106,13 +107,32 @@ test('HTML pages of local modules report their errors, other files stay as they 
     const html = await (await fetch(url)).text()
     assert.match(html, /^<html><head><script>\(function \(\) \{/, url)
     assert.match(html, /module: "term"/)
-    assert.match(html, new RegExp(`fetch\\("http://localhost:${server.port}/edrys-dev/module-error"`))
+    assert.match(html, new RegExp(`fetch\\("http://localhost:${server.port}/edrys-dev/module-error/[0-9a-f]{32}"`))
     // the runner takes code from edrys-Lite's page only
     assert.ok(html.includes(`var origins = ["http://localhost:${server.port}","http://127.0.0.1:${server.port}"]`))
   }
   assert.equal(await (await fetch(`${moduleBase}/term/app.js`)).text(), 'console.log(1)')
   // nothing outside the folder
   assert.equal((await fetch(`${moduleBase}/%2e%2e/lab.yml`)).status, 404)
+})
+
+test('only edrys-Lite\'s page may read a module\'s HTML, it carries the reporter\'s token', async () => {
+  const moduleBase = `http://127.0.0.1:${server.port + 1}`
+  const cors = async (file, origin) =>
+    (await fetch(`${moduleBase}/term/${file}`, { headers: origin ? { Origin: origin } : {} })).headers.get(
+      'access-control-allow-origin'
+    )
+  assert.equal(await cors('index.html', 'https://evil.example'), null)
+  assert.equal(await cors('index.html', 'null'), null)
+  assert.equal(await cors('', undefined), null)
+  // scripts and styles stay open to everyone, as those of real modules
+  assert.equal(await cors('app.js', 'https://evil.example'), '*')
+
+  // nor through a domain rebound to 127.0.0.1
+  const status = await new Promise((resolve) =>
+    http.get(`${moduleBase}/term/`, { headers: { Host: `evil.example:${server.port + 1}` } }, (r) => resolve(r.statusCode))
+  )
+  assert.equal(status, 403)
 })
 
 test('the runner runs code from edrys-Lite\'s page only, and answers it', async () => {
@@ -153,8 +173,11 @@ test('inject puts the script first in <head>, not into <header>', () => {
 })
 
 test('module errors are taken from local modules only, and land in the log', async () => {
-  const post = (origin) =>
-    fetch(`${base}/edrys-dev/module-error`, {
+  // the reporter's address, as a local module's page holds it
+  const html = await (await fetch(`http://127.0.0.1:${server.port + 1}/term/`)).text()
+  const reportUrl = html.match(/fetch\("([^"]+)"/)[1]
+  const post = (origin, url = reportUrl) =>
+    fetch(url, {
       method: 'POST',
       headers: origin ? { Origin: origin } : {},
       body: JSON.stringify({ module: 'term', kind: 'error', message: 'TypeError: x is undefined' }),
@@ -164,6 +187,9 @@ test('module errors are taken from local modules only, and land in the log', asy
   assert.equal((await post('null')).status, 204) // a module edrys-Lite inlined
   assert.equal((await post('https://evil.example')).status, 403)
   assert.equal((await post(undefined)).status, 403)
+  // any page can be "null" (a sandboxed frame), but has no token
+  assert.equal((await post('null', reportUrl.replace(/[0-9a-f]{32}$/, '0'.repeat(32)))).status, 403)
+  assert.equal((await post('null', `${base}/edrys-dev/module-error`)).status, 404)
 
   const errors = server.log().entries.filter((e) => e.kind === 'error')
   assert.equal(errors.length, 2)
@@ -182,7 +208,7 @@ const packed = (value) => pack(value).toString('base64')
 test('the class tab\'s messages land in the log, readable', async () => {
   await fetch(`${base}/edrys-dev/bridge`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', Origin: base },
     body: JSON.stringify({
       type: 'messages',
       messages: [
