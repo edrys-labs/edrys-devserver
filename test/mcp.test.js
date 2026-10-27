@@ -480,6 +480,29 @@ function rawPost(url, headers, body) {
   })
 }
 
+test('a lab that does not load shows in the panel until it loads again', async () => {
+  const origin = await base()
+  const report = (body) =>
+    fetch(origin + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify(body),
+    })
+  await report({ type: 'error', message: `could not parse ${lab}: bad indentation of a mapping entry (3:5)\n\n 3 | x` })
+
+  const panel = await openPanel(origin)
+  const history = await panel.until((m) => m.type === 'history')
+  assert.match(history.lab.text, /around line 3\./)
+  assert.match(history.lab.detail, /bad indentation/)
+
+  await report({ type: 'applied', changed: true })
+  assert.deepEqual(await panel.until((m) => m.type === 'lab'), { type: 'lab', problem: null })
+  panel.close()
+  // the agent got both as lab events; later tests wait for their own
+  assert.equal((await tool('wait_for_event', { timeout_s: 0 })).value.ok, false)
+  assert.equal((await tool('wait_for_event', { timeout_s: 0 })).value.ok, true)
+})
+
 test('the chat takes posts from its own page only, not from other sites or programs', async () => {
   const url = (await base()) + '/edrys-dev/chat'
   const port = new URL(url).port

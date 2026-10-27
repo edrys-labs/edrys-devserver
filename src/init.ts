@@ -11,7 +11,8 @@ const SETTINGS = {
   permissions: { allow: ['mcp__edrys', 'Edit(/lab.yml)', 'Edit(/modules/**)'] },
 }
 
-const lab = (name: string) => `name: ${JSON.stringify(name)}
+/** A lab with a welcome page; also what `--mcp` starts with when there is no lab file. */
+export const starterLab = (name: string) => `name: ${JSON.stringify(name)}
 meta:
   description: Made with edrys-dev.
 modules:
@@ -40,7 +41,7 @@ If the edrys-lab and edrys-module skills are installed, use them to write the la
 `
 
 const FILES: [string, (name: string) => string][] = [
-  ['lab.yml', lab],
+  ['lab.yml', starterLab],
   ['.mcp.json', () => JSON.stringify({ mcpServers: { edrys: SERVER } }, null, 2) + '\n'],
   ['.vscode/mcp.json', () => JSON.stringify({ servers: { edrys: { type: 'stdio', ...SERVER } } }, null, 2) + '\n'],
   ['AGENTS.md', agents],

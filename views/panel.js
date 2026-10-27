@@ -75,6 +75,11 @@
       border: 1px solid var(--accent); background: transparent; color: var(--accent);
     }
     .msg form[aria-disabled="true"] { opacity: .5; pointer-events: none; }
+    .problem { margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; font-size: 13px; line-height: 1.4;
+      border: 1px solid #e0452b; background: rgba(224,69,43,.1); }
+    .problem[hidden] { display: none; }
+    .problem summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .problem pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px ui-monospace, monospace; }
     .status { padding: 0 12px 6px; font-size: 12px; color: var(--muted); min-height: 1em; }
     .hint { padding: 0 12px 6px; font-size: 12px; color: var(--muted); font-style: italic; }
     .hint:empty { display: none; }
@@ -107,6 +112,7 @@
           <small title="edrys-dev: not the class's chat">only you see this</small>
         </header>
         <div class="log" role="log" aria-live="polite"></div>
+        <div class="problem" role="alert" hidden></div>
         <div class="status" aria-live="polite"></div>
         <div class="hint" aria-live="polite"></div>
         <form class="compose">
@@ -123,6 +129,7 @@
   const log = root.querySelector('.log')
   const statusLine = root.querySelector('.status')
   const hintLine = root.querySelector('.hint')
+  const problemBox = root.querySelector('.problem')
   const compose = root.querySelector('.compose')
   const textarea = root.querySelector('textarea')
   const menu = root.querySelector('#sessions')
@@ -287,6 +294,22 @@
     })
   }
 
+  // the lab file does not load: until it does, in plain words, edrys-Lite's message folded
+  function showProblem(problem) {
+    problemBox.hidden = !problem
+    if (!problem) return problemBox.replaceChildren()
+    const text = document.createElement('div')
+    text.textContent = problem.text
+    const details = document.createElement('details')
+    const summary = document.createElement('summary')
+    summary.textContent = 'Details'
+    const pre = document.createElement('pre')
+    pre.textContent = problem.detail
+    details.append(summary, pre)
+    problemBox.replaceChildren(text, details)
+    if (!panel.classList.contains('open')) toggle.classList.add('unread')
+  }
+
   function show(entry) {
     const div = document.createElement('div')
     div.className = 'msg ' + entry.type
@@ -325,6 +348,10 @@
           statusLine.textContent = message.status
           hintLine.textContent = message.hint || ''
           toggle.classList.remove('unread')
+          showProblem(message.lab)
+          break
+        case 'lab':
+          showProblem(message.problem)
           break
         case 'entry':
           if (message.entry.type === 'ai' && message.entry.ask) open = message.entry.ask

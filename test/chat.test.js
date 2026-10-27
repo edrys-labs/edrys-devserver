@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import express from 'express'
-import { Chat, validAnswer } from '../dist/chat.js'
+import { Chat, explain, validAnswer } from '../dist/chat.js'
 import { readSaved } from '../dist/watch.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-chat-'))
@@ -50,6 +50,14 @@ const INPUTS = [
   { id: 'extras', type: 'checkbox', options: ['LED', 'Servo'] },
   { id: 'go', type: 'buttons', options: ['Yes', 'No'] },
 ]
+
+test('a lab error in plain words, with the message of the class tab as detail', () => {
+  const parse = 'could not parse C:\\labs\\lab.yml: bad indentation of a sequence entry (4:4)\n\n 4 |    config: 1'
+  assert.match(explain(parse).text, /^There is a typing mistake in the lab file, around line 4\. .*Ask the agent/)
+  assert.equal(explain(parse).detail, parse)
+  assert.match(explain('not a classroom: /x/lab.yml').text, /^The lab file is not a lab/)
+  assert.match(explain('/edrys-dev/lab: 500').text, /^The class could not load the lab file\./)
+})
 
 test('an answer has only the ids and options of its form', () => {
   assert.ok(validAnswer(INPUTS, { board: 'Uno', extras: ['LED', 'Servo'], go: 'Yes' }))

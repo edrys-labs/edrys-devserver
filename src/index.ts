@@ -60,6 +60,12 @@ if (positionals[0] === 'init' && !values.input) {
 }
 
 const lab = path.resolve(values.input ?? positionals[0] ?? 'lab.yml')
+// an agent started in an empty folder gets a lab to work on, not a failed server
+if (!fs.existsSync(lab) && values.mcp && /\.ya?ml$/i.test(lab) && fs.statSync(path.dirname(lab), { throwIfNoEntry: false })?.isDirectory()) {
+  const { starterLab } = await import('./init.js')
+  fs.writeFileSync(lab, starterLab(path.basename(path.dirname(lab))), { flag: 'wx' })
+  say(`edrys-dev: no lab file yet, created ${lab}`)
+}
 if (!fs.existsSync(lab)) {
   console.error(`edrys-dev: no lab file at ${lab}\n\n${HELP}`)
   process.exit(1)

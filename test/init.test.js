@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-init-'))
 after(() => fs.rmSync(dir, { recursive: true }))
@@ -43,4 +43,26 @@ test('init keeps files that are there and adds to .gitignore once', () => {
 
   init(lab)
   assert.equal(fs.readFileSync(path.join(lab, '.gitignore'), 'utf8'), 'node_modules\n.edrys-dev/\n')
+})
+
+test('--mcp starts in a folder without a lab, with the starter lab', { timeout: 10000 }, async () => {
+  const empty = path.join(dir, 'empty')
+  fs.mkdirSync(empty)
+  const lab = path.join(empty, 'lab.yml')
+  const agent = spawn(process.execPath, ['dist/index.js', lab, '--mcp', '-p', '3305'], { stdio: ['pipe', 'pipe', 'pipe'] })
+  try {
+    const first = await new Promise((resolve) => agent.stderr.once('data', (data) => resolve(data.toString())))
+    assert.match(first, /no lab file yet, created .*lab\.yml/)
+    assert.match(fs.readFileSync(lab, 'utf8'), /^name: "empty"\n/)
+  } finally {
+    agent.kill()
+  }
+})
+
+test('without --mcp a missing lab is still an error', () => {
+  const lab = path.join(dir, 'none', 'lab.yml')
+  const run = spawnSync(process.execPath, ['dist/index.js', lab, '-p', '3306'])
+  assert.equal(run.status, 1)
+  assert.match(run.stderr.toString(), /no lab file at/)
+  assert.equal(fs.existsSync(lab), false)
 })

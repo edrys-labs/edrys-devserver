@@ -117,11 +117,13 @@ By hand:
    npx skills add edrys-labs/skills
    ```
 
-3. Start your agent in the lab folder. **The agent starts edrys-dev itself**; don't start it by hand as well. Ask the agent for the class address if your browser doesn't open it.
+3. Start your agent in the lab folder. **The agent starts edrys-dev itself**; don't start it by hand as well. If the folder has no `lab.yml` yet, edrys-dev creates a starter lab there. Ask the agent for the class address if your browser doesn't open it.
 
 ### Talking to the agent from the class
 
 The class tab has a chat button (🤖, bottom right). What you write there goes straight to the agent. Only you see this chat; it is not the class chat. The agent can answer with text and also with buttons or checkboxes for you to pick from.
+
+When the class cannot take your lab file, for example after a typing mistake, a red note in the chat says so in plain words, with edrys-Lite's message under "Details". It goes away once the file loads again.
 
 Under your message you see "Waiting for the agent…" until the agent picks it up, then "Thinking…". If nothing happens for 30 seconds, the agent may not be listening. Your message is kept and answered once it is.
 

@@ -50,6 +50,23 @@ const NO_REACTION = 'The agent has not reacted yet, maybe it is not connected. Y
 const QUIET = 'The agent is still working, this can take a while.'
 const HINT_MS = { noReaction: 30_000, quiet: 60_000 }
 
+/** Why the class cannot load the lab file, for someone who never saw YAML; detail is the class tab's message. */
+export type LabProblem = { text: string; detail: string }
+
+const STILL = 'The class still shows the last version that worked. Ask the agent here to fix it.'
+
+/** A LabProblem from the message of edrys-Lite's DevBridge (fetchLab there). */
+export function explain(message: string): LabProblem {
+  // js-yaml names line and column: "could not parse <path>: <what> (4:4)\n\n<snippet>"
+  const line = /^could not parse .*?: .*? \((\d+):\d+\)/.exec(message)?.[1]
+  const text = line
+    ? `There is a typing mistake in the lab file, around line ${line}.`
+    : message.startsWith('not a classroom')
+      ? 'The lab file is not a lab that edrys can read.'
+      : 'The class could not load the lab file.'
+  return { text: `${text} ${STILL}`, detail: message.slice(0, 2000) }
+}
+
 /**
  * `values` if they answer `inputs`: only their ids, each with one of its
  * options, a checkbox with a list of them. A radio or buttons input left
@@ -130,6 +147,7 @@ export class Chat extends EventEmitter {
   private form: Input[] = []
   private status = ''
   private hint = ''
+  private lab: LabProblem | null = null
   // a message of the user waits for the first sign of an agent
   private pending = false
   private quiet: NodeJS.Timeout | undefined
@@ -256,6 +274,13 @@ export class Chat extends EventEmitter {
     this.add(entry)
     this.setStatus(status ?? '')
     return ask
+  }
+
+  /** The lab file does not load (a problem), or loads again (null): the panel shows it until then. */
+  labProblem(problem: LabProblem | null) {
+    if (JSON.stringify(problem) === JSON.stringify(this.lab)) return
+    this.lab = problem
+    this.send({ type: 'lab', problem })
   }
 
   setStatus(status: string) {
@@ -387,6 +412,7 @@ export class Chat extends EventEmitter {
       open: this.open,
       status: this.status,
       hint: this.hint,
+      lab: this.lab,
     }
   }
 

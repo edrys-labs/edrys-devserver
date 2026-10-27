@@ -9,7 +9,7 @@ import { unpack } from 'msgpackr'
 import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
-import { Chat, panelFiles, panelScript } from './chat.js'
+import { Chat, explain, panelFiles, panelScript } from './chat.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -192,6 +192,9 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       const { type, ...state } = report
       classState = state as ClassState
     }
+    // the user may not see the terminal or the agent: the chat panel says it too
+    if (report.type === 'error') chat.labProblem(explain(String(report.message)))
+    if (report.type === 'applied') chat.labProblem(null)
     if (report.type === 'messages' && Array.isArray(report.messages)) {
       for (const m of report.messages) addLog({ ...m, body: readableBody(m.body), kind: 'message' })
       dropped += Number(report.dropped) || 0
