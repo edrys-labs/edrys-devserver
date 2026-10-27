@@ -10,6 +10,8 @@ import { reachable } from './origin.js'
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
 Usage: edrys-dev [lab.yml] [options]
+       edrys-dev init [folder]   set up a new lab for an AI agent: lab.yml,
+                                 agent config and instructions
 
   -i, --input <file>  lab file (YAML or JSON), default ./lab.yml
   -p, --port <port>   port, default 3210 (the next free one if taken)
@@ -48,6 +50,12 @@ const say = values.mcp ? console.error : console.log
 
 if (values.help) {
   say(HELP)
+  process.exit(0)
+}
+
+if (positionals[0] === 'init' && !values.input) {
+  const { init } = await import('./init.js')
+  await init(positionals[1] ?? '.')
   process.exit(0)
 }
 

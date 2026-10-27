@@ -89,6 +89,16 @@ edrys-dev can work together with an AI coding agent such as Claude Code or GitHu
 
 ### Setup
 
+The quick way, for a new lab:
+
+```bash
+npx @edryslabs/edrys-dev init my-lab
+```
+
+This makes the folder `my-lab` with a starter `lab.yml`, the agent configuration for Claude Code (`.mcp.json`) and VS Code Copilot (`.vscode/mcp.json`), instructions for the agent (`AGENTS.md`, `CLAUDE.md`), Claude Code settings that let the agent use edrys-dev and edit `lab.yml` and `modules/` without asking each time (`.claude/settings.json`), and a `.gitignore`. In a folder that already has some of these files, it keeps them. Then open the folder in your agent and write "start".
+
+By hand:
+
 1. Create a file `.mcp.json` in your lab folder:
 
    ```json
