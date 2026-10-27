@@ -1,6 +1,6 @@
 {
   "name": "@edryslabs/edrys-dev",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Develop edrys-Lite labs locally: serves edrys-Lite, syncs on its own port and republishes the class whenever the lab file changes",
   "type": "module",
   "bin": {
@@ -36,7 +36,7 @@
   },
   "homepage": "https://github.com/edrys-labs/edrys-devserver#readme",
   "dependencies": {
-    "@edryslabs/edrys-lite": "3.2.0-dev.0",
+    "@edryslabs/edrys-lite": "3.2.0-dev.1",
     "chokidar": "^4.0.3",
     "dompurify": "^3.4.17",
     "express": "^5.1.0",
