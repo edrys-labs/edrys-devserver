@@ -1,6 +1,6 @@
 import type { Server } from 'node:http'
 import { WebSocketServer } from 'ws'
-import { setupWSConnection } from 'edrys-websocket-server/utils'
+import { setupWSConnection } from '@edryslabs/websocket-server/utils'
 
 /**
  * Yjs sync on the dev server's own port (`--local`), as in the edrys

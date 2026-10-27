@@ -230,7 +230,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   app.use(express.static(edrysDist()))
 
   const server = http.createServer(app)
-  // Loaded only when used: edrys-websocket-server is an optional dependency.
+  // Loaded only when used: @edryslabs/websocket-server is an optional dependency.
   const stopSync = options.local ? (await import('./sync.js')).attachSync(server) : () => {}
   const send = (event: string, data: object) => {
     for (const client of clients) client.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
