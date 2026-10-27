@@ -72,6 +72,7 @@
     }
     .msg form[aria-disabled="true"] { opacity: .5; pointer-events: none; }
     .status { padding: 0 12px 6px; font-size: 12px; color: var(--muted); min-height: 1em; }
+    .skipped { align-self: center; font-size: 12px; color: var(--muted); }
     .compose { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
     textarea {
       flex: 1; resize: none; height: 40px; padding: 8px; font-size: 14px; border-radius: 8px;
@@ -124,20 +125,30 @@
   toggle.addEventListener('click', () => setOpen(!panel.classList.contains('open')))
   setOpen(sessionStorage.getItem(OPEN_KEY) === '1')
 
+  // the response, or null if edrys-dev could not be reached
   function post(body) {
     return fetch('/edrys-dev/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    })
+    }).catch(() => null)
   }
 
-  compose.addEventListener('submit', (event) => {
+  // shown in the status line until the agent sets the next one
+  function notSent() {
+    statusLine.textContent = 'Not sent: is edrys-dev still running? Try again.'
+  }
+
+  compose.addEventListener('submit', async (event) => {
     event.preventDefault()
     const text = textarea.value.trim()
     if (!text) return
     textarea.value = ''
-    post({ text })
+    const response = await post({ text })
+    if (response?.ok) return
+    // back into the box, unless the user typed something new meanwhile
+    if (!textarea.value) textarea.value = text
+    notSent()
   })
   textarea.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -212,7 +223,9 @@
         values[input.id] = input.type === 'radio' ? checked[0] ?? '' : checked
       }
       const response = await post({ ask: entry.ask, values })
-      if (!response.ok) disable(entry.ask)
+      // closed in the meantime; otherwise the form stays, to send again
+      if (response?.status === 409) disable(entry.ask)
+      else if (!response?.ok) notSent()
     })
 
     if (entry.ask !== open) form.setAttribute('aria-disabled', 'true')
@@ -248,6 +261,12 @@
         case 'history':
           log.replaceChildren()
           open = message.open
+          if (message.skipped) {
+            const note = document.createElement('div')
+            note.className = 'skipped'
+            note.textContent = `${message.skipped} earlier messages not shown`
+            log.appendChild(note)
+          }
           message.entries.forEach(show)
           statusLine.textContent = message.status
           toggle.classList.remove('unread')

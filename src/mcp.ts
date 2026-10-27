@@ -9,6 +9,7 @@ import type express from 'express'
 import open from 'open'
 import type { ClassState, DevServer, Report } from './server.js'
 import type { Entry } from './chat.js'
+import { readSaved } from './watch.js'
 
 // never answer 2026-07-28, see above
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
@@ -479,8 +480,8 @@ export function startMcp(server: DevServer, options: McpOptions) {
     res.on('close', () => (watchers = watchers.filter((watcher) => watcher !== res)))
   })
 
-  function getState() {
-    const local = localUrls(fs.readFileSync(options.lab, 'utf8'))
+  async function getState() {
+    const local = localUrls(await readSaved(options.lab))
     return {
       lab: options.lab,
       url: options.url,

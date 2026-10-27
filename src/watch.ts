@@ -1,5 +1,22 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { watch } from 'chokidar'
+
+/**
+ * Reads `file`; while it is missing, tries again for up to `ms`: a save that
+ * renames a copy over it, or deletes and writes it, leaves it gone a moment.
+ */
+export async function readSaved(file: string, ms = 500): Promise<string> {
+  const end = Date.now() + ms
+  for (;;) {
+    try {
+      return await fs.readFile(file, 'utf8')
+    } catch (error: any) {
+      if (error.code !== 'ENOENT' || Date.now() >= end) throw error
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+  }
+}
 
 /**
  * Calls `onChange` once per save of `file`: editors often write a file in

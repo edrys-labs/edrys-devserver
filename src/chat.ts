@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
@@ -22,6 +23,31 @@ export type Entry =
 // what the saved chat keeps, oldest first out
 const MAX_ENTRIES = 500
 
+// what a panel gets on (re)load, in characters of JSON: 500 long messages
+// could be 25 MB; read_chat has the rest
+const HISTORY_MAX = 1_000_000
+
+// a burst of messages is saved once
+const SAVE_MS = 300
+
+/**
+ * `values` if they answer `inputs`: only their ids, each with one of its
+ * options, a checkbox with a list of them. A radio or buttons input left
+ * empty is '' or missing.
+ */
+export function validAnswer(inputs: Input[], values: any): Record<string, string | string[]> | null {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return null
+  for (const [id, value] of Object.entries<any>(values)) {
+    const input = inputs.find((i) => i.id === id)
+    if (!input) return null
+    if (input.type === 'checkbox') {
+      if (!Array.isArray(value) || new Set(value).size !== value.length) return null
+      if (!value.every((v) => input.options.includes(v))) return null
+    } else if (value !== '' && !input.options.includes(value)) return null
+  }
+  return values
+}
+
 /**
  * The agent chat over the class tab: its history, saved next to the lab in
  * .edrys-dev/chat.json, and the panel's endpoints. Not the class's own
@@ -35,15 +61,24 @@ export class Chat extends EventEmitter {
   entries: Entry[] = []
   /** The one form the user can still answer. Forms of earlier runs are closed. */
   open: string | null = null
+  /** The inputs of the open form. */
+  private form: Input[] = []
   private status = ''
   private panels = new Set<express.Response>()
   private reported = false
   private settling: NodeJS.Timeout | undefined
+  private saveTimer: NodeJS.Timeout | undefined
+  // one write after the other, never two at once into the same file
+  private saving = Promise.resolve()
 
   constructor(private file: string, private settleMs = 0) {
     super()
     try {
-      this.entries = JSON.parse(fs.readFileSync(file, 'utf8'))
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+      // a file edited by hand, or of another tool
+      if (Array.isArray(saved)) {
+        this.entries = saved.filter((e) => e && typeof e === 'object' && typeof e.type === 'string').slice(-MAX_ENTRIES)
+      }
     } catch {}
   }
 
@@ -60,6 +95,7 @@ export class Chat extends EventEmitter {
     if (ask) {
       this.closeForm()
       this.open = ask
+      this.form = inputs
     }
     this.add(entry)
     this.setStatus(status ?? '')
@@ -86,8 +122,10 @@ export class Chat extends EventEmitter {
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       })
-      // a reload shows the whole chat again, with the open form and status
-      res.write(`data: ${JSON.stringify({ type: 'history', entries: this.entries, open: this.open, status: this.status })}\n\n`)
+      // a reload shows the chat again, with the open form and status
+      const entries = this.recent()
+      const skipped = this.entries.length - entries.length
+      res.write(`data: ${JSON.stringify({ type: 'history', entries, skipped, open: this.open, status: this.status })}\n\n`)
       this.panels.add(res)
       clearTimeout(this.settling)
       if (!this.reported) this.emit('connection', (this.reported = true))
@@ -111,9 +149,12 @@ export class Chat extends EventEmitter {
         this.emit('user', entry)
         return res.sendStatus(204)
       }
-      if (typeof ask === 'string' && ask === this.open && values && typeof values === 'object') {
+      if (typeof ask === 'string' && ask === this.open) {
+        // the agent gets what its form offered, or nothing
+        const answer = validAnswer(this.form, values)
+        if (!answer) return res.sendStatus(400)
         this.open = null
-        const entry: Entry = { t: Date.now(), type: 'answer', ask, values }
+        const entry: Entry = { t: Date.now(), type: 'answer', ask, values: answer }
         this.add(entry)
         this.emit('answer', entry)
         return res.sendStatus(204)
@@ -134,10 +175,41 @@ export class Chat extends EventEmitter {
     for (const panel of this.panels) panel.write(`data: ${JSON.stringify(message)}\n\n`)
   }
 
+  /** The newest entries that fit into HISTORY_MAX, at least the last one. */
+  private recent(): Entry[] {
+    let start = this.entries.length
+    let size = 0
+    while (start > 0) {
+      size += JSON.stringify(this.entries[start - 1]).length
+      if (size > HISTORY_MAX && start < this.entries.length) break
+      start--
+    }
+    return this.entries.slice(start)
+  }
+
   private save() {
+    this.saveTimer ??= setTimeout(() => {
+      this.saveTimer = undefined
+      this.saving = this.saving.then(() => this.write())
+    }, SAVE_MS)
+  }
+
+  /** Writes what is not saved yet, e.g. before edrys-dev exits. */
+  async flush() {
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer)
+      this.saveTimer = undefined
+      this.saving = this.saving.then(() => this.write())
+    }
+    await this.saving
+  }
+
+  // a copy renamed over the file: a crash midway leaves the old chat, not half a one
+  private async write() {
     try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true })
-      fs.writeFileSync(this.file, JSON.stringify(this.entries))
+      await fsp.mkdir(path.dirname(this.file), { recursive: true })
+      await fsp.writeFile(this.file + '.tmp', JSON.stringify(this.entries))
+      await fsp.rename(this.file + '.tmp', this.file)
     } catch (error: any) {
       console.error('edrys-dev: could not save the chat:', error.message)
     }

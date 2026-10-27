@@ -348,8 +348,13 @@ test('read_chat returns what the panel shows, saved next to the lab', async () =
   assert.ok(value.skipped > 0)
   assert.deepEqual(value.entries.at(-1).markdown, 'D?')
 
-  const saved = JSON.parse(fs.readFileSync(path.join(dir, '.edrys-dev', 'chat.json'), 'utf8'))
-  assert.deepEqual(saved.slice(-3), value.entries)
+  // saved a moment later, once per burst
+  const file = path.join(dir, '.edrys-dev', 'chat.json')
+  const saved = () => JSON.parse(fs.readFileSync(file, 'utf8')).slice(-3)
+  for (let i = 0; i < 50 && JSON.stringify(saved()) !== JSON.stringify(value.entries); i++) {
+    await new Promise((r) => setTimeout(r, 20))
+  }
+  assert.deepEqual(saved(), value.entries)
 })
 
 test('a form waits at most timeout_s, with progress; a later answer is an event', { timeout: 10000 }, async () => {

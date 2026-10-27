@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import express from 'express'
 import { unpack } from 'msgpackr'
-import { watchFile, watchModules } from './watch.js'
+import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, panelFiles, panelScript } from './chat.js'
@@ -139,7 +139,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   app.get('/edrys-dev/lab', async (req, res) => {
     res.json({
       path: options.lab,
-      text: await fs.readFile(options.lab, 'utf8'),
+      text: await readSaved(options.lab),
       // Without it the class keeps its own (or edrys-Lite's default) transport.
       communication: options.local
         ? { communicationMethod: 'Websocket', websocketUrl: `ws://${req.headers.host}` }
@@ -314,6 +314,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       for (const client of [...clients, ...others]) client.end()
       server.closeAllConnections()
       await new Promise((resolve) => server.close(resolve))
+      await chat.flush()
     },
   }
 }

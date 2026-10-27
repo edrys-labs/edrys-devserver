@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import http from 'node:http'
+import { spawn } from 'node:child_process'
 import WebSocket from 'ws'
 import { startDevServer } from '../dist/server.js'
 import { hostNames } from '../dist/origin.js'
@@ -171,4 +172,12 @@ test('takes the next port when the first is in use', async () => {
   } finally {
     await second.close()
   }
+})
+
+test('stops cleanly on SIGTERM, as on Ctrl+C', { timeout: 10000 }, async () => {
+  const child = spawn(process.execPath, ['dist/index.js', lab, '-p', '3295'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  await new Promise((resolve) => child.stdout.once('data', resolve))
+  child.kill('SIGTERM')
+  const [code, killedBy] = await new Promise((resolve) => child.once('exit', (...args) => resolve(args)))
+  assert.deepEqual([code, killedBy], [0, null])
 })

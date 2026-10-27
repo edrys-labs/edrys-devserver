@@ -73,6 +73,15 @@ const server = await startDevServer({
   agent: values.mcp,
 })
 
+// Ctrl+C, or a process manager or agent client stopping it; the chat is saved
+// first. Before anything is printed: whoever waits for that may stop it at once.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, async () => {
+    await server.close()
+    process.exit(0)
+  })
+}
+
 server.bus.on('report', (report: Report) => {
   switch (report.type) {
     case 'open':
@@ -97,8 +106,3 @@ if (reachable(values.host)) {
 }
 if (values.mcp) startMcp(server, { lab, url })
 if (values.open) await open(url)
-
-process.on('SIGINT', async () => {
-  await server.close()
-  process.exit(0)
-})
