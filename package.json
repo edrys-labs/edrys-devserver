@@ -1,5 +1,5 @@
 {
-  "name": "edrys-devserver",
+  "name": "@edryslabs/edrys-dev",
   "version": "0.1.0",
   "description": "Develop edrys-Lite labs locally: serves edrys-Lite, syncs on its own port and republishes the class whenever the lab file changes",
   "type": "module",
@@ -10,10 +10,14 @@
     "dist",
     "views"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "test": "tsc && node --test"
+    "test": "tsc && node --test",
+    "prepublishOnly": "rm -rf dist && tsc"
   },
   "keywords": [
     "edrys",
@@ -21,7 +25,16 @@
     "remote lab",
     "devServer"
   ],
-  "license": "MPL-2.0",
+  "license": "MIT",
+  "author": "edrys-labs (https://github.com/edrys-labs)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edrys-labs/edrys-devserver.git"
+  },
+  "bugs": {
+    "url": "https://github.com/edrys-labs/edrys-devserver/issues"
+  },
+  "homepage": "https://github.com/edrys-labs/edrys-devserver#readme",
   "dependencies": {
     "@edryslabs/edrys-lite": "3.2.0-dev.0",
     "chokidar": "^4.0.3",

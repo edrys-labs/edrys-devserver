@@ -3,8 +3,11 @@
 Develop an [edrys-Lite](https://github.com/edrys-labs/edrys-Lite) lab on your own machine. `edrys-dev` serves edrys-Lite from localhost and keeps a class in step with your lab file: save `lab.yml` and the class updates in every open tab.
 
 ```bash
+npm install -g @edryslabs/edrys-dev
 edrys-dev lab.yml --open
 ```
+
+Or without installing: `npx @edryslabs/edrys-dev lab.yml --open`. Needs Node.js 20 or newer.
 
 ```
 edrys-dev: /home/you/my-lab/lab.yml
@@ -38,10 +41,12 @@ With `--mcp`, edrys-dev is an MCP server over stdio: an agent such as Claude Cod
 ```json
 {
   "mcpServers": {
-    "edrys": { "command": "edrys-dev", "args": ["--mcp", "lab.yml"] }
+    "edrys": { "command": "npx", "args": ["-y", "@edryslabs/edrys-dev", "--mcp", "lab.yml"] }
   }
 }
 ```
+
+With edrys-dev installed globally, `"command": "edrys-dev", "args": ["--mcp", "lab.yml"]` starts faster.
 
 Tools: `get_state` (lab file, class URL, share link, the class: rooms, users, modules), `goto` (move the class tab to a room, open a student or station tab), `chat` and `read_chat`, `read_messages` (module messages the class tab saw, and errors of local modules), `read_module_state` (what the modules share in a room), `run_in_module` (JavaScript in a local module's frame, only when you ask for it), `wait_for_event`. Browser events reach Claude Code as channel messages; agents without channels read the event stream in `get_state.events` (e.g. with a Monitor) or call `wait_for_event`. If the port is taken, the next free one is used; the agent finds the URL with `get_state`.
 
@@ -74,3 +79,7 @@ npm test         # builds, then runs test/*.test.js
 ```
 
 edrys-Lite comes from npm as [`@edryslabs/edrys-lite`](https://www.npmjs.com/package/@edryslabs/edrys-lite), pinned to one version: its `dist/` is what edrys-dev serves. To try changes to edrys-Lite, build it (`npm run build` there) and link the checkout with `npm install ../edrys-Lite`; pin the published version again afterwards. The same goes for [`@edryslabs/websocket-server`](https://www.npmjs.com/package/@edryslabs/websocket-server), an optional dependency that only `--local` uses.
+
+## License
+
+[MIT](LICENSE). The MCP server and the agent chat follow [LiaScript DevServer](https://github.com/LiaScript/LiaScript-DevServer) (MIT).
