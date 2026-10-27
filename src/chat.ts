@@ -112,12 +112,6 @@ export class Chat extends EventEmitter {
       // e.g. a form that was closed in the meantime
       res.sendStatus(409)
     })
-
-    for (const [file, source] of Object.entries(PANEL_FILES)) {
-      // dotfiles: sendFile checks the whole absolute path, and installs often
-      // live under one (~/.nvm, ~/.npm/_npx); the path is ours, not the request's
-      app.get('/edrys-dev/' + file, (req, res) => res.sendFile(source(), { dotfiles: 'allow' }))
-    }
   }
 
   private add(entry: Entry) {
@@ -151,5 +145,20 @@ const PANEL_FILES: Record<string, () => string> = {
   'purify.js': () => require.resolve('dompurify/purify.min.js'),
 }
 
-/** The script tag that brings the panel into the edrys-Lite page. */
-export const PANEL_SCRIPT = '<script src="/edrys-dev/panel.js" defer></script>'
+/** Serves panel.js and the libraries its chat uses. */
+export function panelFiles(app: express.Express) {
+  for (const [file, source] of Object.entries(PANEL_FILES)) {
+    // dotfiles: sendFile checks the whole absolute path, and installs often
+    // live under one (~/.nvm, ~/.npm/_npx); the path is ours, not the request's
+    app.get('/edrys-dev/' + file, (req, res) => res.sendFile(source(), { dotfiles: 'allow' }))
+  }
+}
+
+/**
+ * The script tag that brings panel.js into the edrys-Lite page: it reloads
+ * student and station tabs when a local module changed, and with `chat` (an
+ * agent is connected) shows the chat in the class tab.
+ */
+export function panelScript(chat: boolean): string {
+  return `<script src="/edrys-dev/panel.js" defer${chat ? ' data-chat' : ''}></script>`
+}

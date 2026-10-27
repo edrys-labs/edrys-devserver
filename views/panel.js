@@ -10,6 +10,8 @@
     }
     return
   }
+  // the chat only with an agent to answer it (edrys-dev --mcp)
+  if (!document.currentScript || !document.currentScript.hasAttribute('data-chat')) return
 
   const OPEN_KEY = 'edrys-dev:chat-open'
 

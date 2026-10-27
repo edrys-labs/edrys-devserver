@@ -9,7 +9,7 @@ import { unpack } from 'msgpackr'
 import { watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { sameOrigin } from './origin.js'
-import { Chat, PANEL_SCRIPT } from './chat.js'
+import { Chat, panelFiles, panelScript } from './chat.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -61,6 +61,8 @@ export type DevServerOptions = {
   local?: boolean
   /** Absolute path of a folder of local modules, one per subfolder. */
   modules?: string
+  /** An agent is connected (--mcp): the class tab gets its chat panel. */
+  agent?: boolean
 }
 
 export type DevServer = {
@@ -219,12 +221,14 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   })
 
   const chat = new Chat(path.join(path.dirname(options.lab), '.edrys-dev', 'chat.json'))
-  chat.routes(app)
+  // without an agent, nobody would answer
+  if (options.agent) chat.routes(app)
+  panelFiles(app)
 
-  // edrys-Lite's page, with the chat panel (it shows only in the class tab)
+  // edrys-Lite's page, with panel.js (the chat shows only in the class tab)
   app.get(['/', '/index.html'], async (req, res) => {
     const page = await fs.readFile(path.join(edrysDist(), 'index.html'), 'utf8')
-    res.type('html').send(page + PANEL_SCRIPT)
+    res.type('html').send(page + panelScript(!!options.agent))
   })
 
   app.use(express.static(edrysDist()))

@@ -67,6 +67,7 @@ const server = await startDevServer({
   host: values.host,
   local: values.local,
   modules,
+  agent: values.mcp,
 })
 
 server.bus.on('report', (report: Report) => {
