@@ -6,6 +6,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
+import { forgetOld } from '../dist/mcp.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-mcp-'))
 const lab = path.join(dir, 'lab.yml')
@@ -170,7 +171,8 @@ test('chat needs the panel', async () => {
   assert.match(result.content[0].text, /chat is not open/)
 })
 
-test('messages, forms and typed text between agent and panel', async () => {
+// a form that never ends would hang the run
+test('messages, forms and typed text between agent and panel', { timeout: 15000 }, async () => {
   const panel = await openPanel(await base())
   await panel.until((m) => m.type === 'history')
   assert.equal((await tool('get_state')).value.chat, true)
@@ -224,16 +226,36 @@ test('messages, forms and typed text between agent and panel', async () => {
   assert.deepEqual((await third).value, { ask: thirdForm.entry.ask, superseded: true })
   assert.ok(await panel.until((m) => m.type === 'close' && m.ask === thirdForm.entry.ask))
 
-  // the panel closes while a form waits
+  // so does one that does not wait
+  const fourthForm = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'B?')
+  const fifth = await tool('chat', { markdown: 'C?', inputs: [{ id: 'c', type: 'buttons', options: ['3'] }], wait: false })
+  assert.equal(fifth.value.sent, true)
+  assert.deepEqual((await fourth).value, { ask: fourthForm.entry.ask, superseded: true })
+
+  // a reload of the class tab keeps a waiting form
+  const sixth = tool('chat', { markdown: 'D?', inputs: [{ id: 'd', type: 'buttons', options: ['4'] }] })
+  let ended = false
+  sixth.then(() => (ended = true))
+  await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'D?')
   panel.close()
-  assert.equal((await fourth).value.disconnected, true)
+  const reloaded = await openPanel(await base())
+  await reloaded.until((m) => m.type === 'history')
+  await new Promise((r) => setTimeout(r, 2200))
+  assert.equal((await tool('get_state')).value.chat, true)
+  assert.equal(ended, false)
+
+  // the panel closes for good while a form waits: it ends after a moment
+  reloaded.close()
+  await new Promise((r) => setTimeout(r, 500))
+  assert.equal(ended, false)
+  assert.equal((await sixth).value.disconnected, true)
 })
 
 test('read_chat returns what the panel shows, saved next to the lab', async () => {
   const { value } = await tool('read_chat', { last: 3 })
   assert.equal(value.entries.length, 3)
   assert.ok(value.skipped > 0)
-  assert.deepEqual(value.entries.at(-1).markdown, 'B?')
+  assert.deepEqual(value.entries.at(-1).markdown, 'D?')
 
   const saved = JSON.parse(fs.readFileSync(path.join(dir, '.edrys-dev', 'chat.json'), 'utf8'))
   assert.deepEqual(saved.slice(-3), value.entries)
@@ -469,6 +491,44 @@ test('read_messages filters what the modules did', async () => {
   const newest = (await tool('read_messages', { last: 1 })).value
   assert.deepEqual([newest.skipped, newest.entries[0].t], [2, 3])
   assert.deepEqual((await tool('read_messages', { errors: true })).value.entries, [])
+})
+
+test('the same module error counts once in 10 s, another one at once', async () => {
+  fs.mkdirSync(path.join(dir, 'modules', 'err'))
+  fs.writeFileSync(path.join(dir, 'modules', 'err', 'index.html'), '<html><head></head><body>err</body></html>')
+  const html = await (await fetch('http://127.0.0.1:3271/err/')).text()
+  const reportUrl = html.match(/fetch\("([^"]+)"/)[1]
+  const error = (message) =>
+    fetch(reportUrl, {
+      method: 'POST',
+      headers: { Origin: 'null' },
+      body: JSON.stringify({ module: 'err', kind: 'error', message }),
+    })
+
+  await error('TypeError: a')
+  await error('TypeError: a')
+  await error('TypeError: b')
+
+  const events = [
+    (await tool('wait_for_event', { timeout_s: 2 })).value,
+    (await tool('wait_for_event', { timeout_s: 2 })).value,
+    (await tool('wait_for_event', { timeout_s: 0 })).value,
+  ]
+  assert.deepEqual(events, [
+    { type: 'module', module: 'err', error: 'TypeError: a' },
+    { type: 'module', module: 'err', error: 'TypeError: b' },
+    { timeout: true },
+  ])
+})
+
+test('forgetOld drops what is too old, then the oldest beyond the limit', () => {
+  const list = [{ t: 1 }, { t: 2 }, { t: 3 }, { t: 4 }, { t: 5 }]
+  forgetOld(list, 1, 10)
+  assert.deepEqual(list, [{ t: 2 }, { t: 3 }, { t: 4 }, { t: 5 }])
+  forgetOld(list, 0, 2)
+  assert.deepEqual(list, [{ t: 4 }, { t: 5 }])
+  forgetOld(list, 9, 10)
+  assert.deepEqual(list, [])
 })
 
 test('unknown methods and tools are protocol errors', async () => {

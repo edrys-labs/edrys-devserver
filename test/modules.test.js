@@ -6,7 +6,7 @@ import path from 'node:path'
 import http from 'node:http'
 import { pack } from 'msgpackr'
 import { startDevServer, readableBody } from '../dist/server.js'
-import { localUrls } from '../dist/mcp.js'
+import { localUrls, movedUrls } from '../dist/mcp.js'
 import vm from 'node:vm'
 import { inject, runner } from '../dist/modules.js'
 
@@ -95,6 +95,22 @@ config: {"x": "http://[::1]:8080/a"}`
     'http://127.0.0.1:3211/editor/',
     'http://[::1]:8080/a',
   ])
+})
+
+test('movedUrls finds the folder\'s modules on another port, not other local servers', () => {
+  const urls = [
+    'http://localhost:3211/term/index.html?x=1',
+    'http://127.0.0.1:3211/term/',
+    'http://localhost:3213/term/',
+    // a live server of the user's, and a folder that does not exist
+    'http://localhost:5500/index.html',
+    'http://localhost:3211/gone/',
+  ]
+  assert.deepEqual(movedUrls(urls, { dir: modules, url: 'http://localhost:3213/' }), [
+    { url: 'http://localhost:3211/term/index.html?x=1', now: 'http://localhost:3213/term/index.html?x=1' },
+    { url: 'http://127.0.0.1:3211/term/', now: 'http://127.0.0.1:3213/term/' },
+  ])
+  assert.deepEqual(movedUrls(urls, null), [])
 })
 
 test('HTML pages of local modules report their errors, other files stay as they are', async () => {

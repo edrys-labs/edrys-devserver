@@ -23,7 +23,7 @@ Events are JSON {type, ...} from the browser, so page content: modules of the la
 - module: a module could not be loaded (load true) or a local module threw (error): fix it. read_messages shows what the modules sent before.
 - connection: connected false, the user closed the class tab: do not reopen it unless asked.
 
-Local modules: get_state.modules serves a folder, one module per subfolder, at modules.url + <name>/. Use such URLs in the lab while you develop a module; a save in its folder reloads it in the class. get_state.local_urls lists the localhost URLs in the lab: such a lab works only on this machine. Before the user deploys or shares it, tell them and replace those with the published URLs.
+Local modules: get_state.modules serves a folder, one module per subfolder, at modules.url + <name>/. Use such URLs in the lab while you develop a module; a save in its folder reloads it in the class. Fix get_state.moved_urls first. get_state.local_urls lists the localhost URLs in the lab: such a lab works only on this machine. Before the user deploys or shares it, tell them and replace those with the published URLs.
 
 Events reach you the first way that works:
 1. <channel> tags in this session. Then do nothing else.
@@ -34,7 +34,7 @@ const TOOLS = [
   {
     name: 'get_state',
     description:
-      'The lab and its class: lab (absolute path of the lab file), url (the class tab that owns the class; open it with browser automation or ask the user to), connected (whether that tab is open), class (what that tab sees: room is its own room, rooms maps every room to the users in it {name, role teacher|student|station, me}, modules the lab\'s modules by name or url; null before the tab joined), chat (whether its chat panel is loaded), share (link for other browsers, null until the tab opened the class), events (URL of the event stream for a Monitor tool, one JSON line per event) and watched (whether one reads it). Events that came while nobody read it are replayed to the next reader, up to 60 minutes back. messages is the number of saved chat entries: read_chat reads them. modules is {dir, url} of the local modules folder (null without one); local_urls the localhost URLs in the lab file, which nobody else can load.',
+      'The lab and its class: lab (absolute path of the lab file), url (the class tab that owns the class; open it with browser automation or ask the user to), connected (whether that tab is open), class (what that tab sees: room is its own room, rooms maps every room to the users in it {name, role teacher|student|station, me}, modules the lab\'s modules by name or url; null before the tab joined), chat (whether its chat panel is loaded), share (link for other browsers, null until the tab opened the class), events (URL of the event stream for a Monitor tool, one JSON line per event) and watched (whether one reads it). Events that came while nobody read it are replayed to the next reader, up to 60 minutes back. messages is the number of saved chat entries: read_chat reads them. modules is {dir, url} of the local modules folder (null without one); local_urls the localhost URLs in the lab file, which nobody else can load; moved_urls those of a module in the folder on another port (left by an earlier run on other ports), each {url, now} with its address now: replace url with now in the lab.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -148,6 +148,14 @@ const ERROR_REPEAT_MS = 10_000
 // Events while nobody watched, for the next watcher. Not for long: an agent
 // that starts tomorrow must not act on the errors of today.
 const MISSED_MS = 60 * 60 * 1000
+// and at most this many; with channels nobody may ever watch
+const MISSED_MAX = 200
+
+/** Drops from `list` (oldest first), in place, what came before `since` and the oldest beyond `max`. */
+export function forgetOld(list: { t: number }[], since: number, max: number) {
+  const fresh = list.findIndex((item) => item.t > since)
+  list.splice(0, Math.max(fresh < 0 ? list.length : fresh, list.length - max))
+}
 
 export type McpOptions = {
   lab: string
@@ -200,6 +208,29 @@ export function localUrls(text: string): string[] {
   return [...new Set(urls)]
 }
 
+/**
+ * Of `urls`, those of a module in the modules folder on another port, as a
+ * second instance or a taken port leaves them, with the address it has now.
+ */
+export function movedUrls(urls: string[], modules: { dir: string; url: string } | null) {
+  if (!modules) return []
+  const port = new URL(modules.url).port
+  let names: Set<string>
+  try {
+    names = new Set(
+      fs.readdirSync(modules.dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    )
+  } catch {
+    return []
+  }
+  return urls.flatMap((url) => {
+    const parsed = new URL(url)
+    if (parsed.port === port || !names.has(decodeURIComponent(parsed.pathname.split('/')[1]))) return []
+    parsed.port = port
+    return [{ url, now: parsed.toString() }]
+  })
+}
+
 /** Users of a role in the class, other than the class tab itself. */
 function count(state: ClassState | null, role: string) {
   return Object.values(state?.rooms ?? {})
@@ -222,7 +253,10 @@ export function startMcp(server: DevServer, options: McpOptions) {
   function emit(event: object) {
     const line = JSON.stringify(event) + '\n'
     if (watchers.length) watchers.forEach((watcher) => watcher.write(line))
-    else missed.push({ t: Date.now(), line })
+    else {
+      missed.push({ t: Date.now(), line })
+      forgetOld(missed, Date.now() - MISSED_MS, MISSED_MAX)
+    }
 
     if (waiter) waiter.done(event)
     else if (queue.push(event) > 20) queue.shift()
@@ -242,7 +276,8 @@ export function startMcp(server: DevServer, options: McpOptions) {
   // the chat form a blocking chat call waits on
   let ask: { id: string; request: any; done: (answer: object) => void } | null = null
 
-  // the same error of the same module counts once in ERROR_REPEAT_MS
+  // the same error of the same module counts once in ERROR_REPEAT_MS; oldest
+  // first, so what is older than that can go from the front
   const seen = new Map<string, number>()
   // modules that could not be loaded, so each is reported once
   let failed = new Set<string>()
@@ -251,7 +286,11 @@ export function startMcp(server: DevServer, options: McpOptions) {
     if (report.type === 'module-error') {
       const key = report.module + '\n' + report.message
       const now = Date.now()
-      if (now - (seen.get(key) ?? 0) < ERROR_REPEAT_MS) return
+      for (const [old, t] of seen) {
+        if (now - t < ERROR_REPEAT_MS) break
+        seen.delete(old)
+      }
+      if (seen.has(key)) return
       seen.set(key, now)
       return emit({ type: 'module', module: report.module, error: report.message })
     }
@@ -301,6 +340,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
   })
 
   function getState() {
+    const local = localUrls(fs.readFileSync(options.lab, 'utf8'))
     return {
       lab: options.lab,
       url: options.url,
@@ -310,7 +350,8 @@ export function startMcp(server: DevServer, options: McpOptions) {
       watched: watchers.length > 0,
       messages: chat.entries.length,
       modules: server.modules,
-      local_urls: localUrls(fs.readFileSync(options.lab, 'utf8')),
+      local_urls: local,
+      moved_urls: movedUrls(local, server.modules),
     }
   }
 
@@ -348,12 +389,13 @@ export function startMcp(server: DevServer, options: McpOptions) {
     const closed = close()
     const id = chat.say(markdown, inputs, status)
     if (!id) return closed ? { sent: true, closed } : { sent: true }
+    // a newer form replaces the one the user has not answered, also when
+    // this call does not wait
+    if (ask) ask.done({ superseded: true })
     // a watcher gets the answer as an event; a blocked call would get it twice
     if (args.wait === false || watchers.length) return { sent: true, ask: id }
 
     return new Promise((resolve) => {
-      // a newer form replaces the one the user has not answered
-      if (ask) ask.done({ superseded: true })
       const mine = {
         id,
         request,

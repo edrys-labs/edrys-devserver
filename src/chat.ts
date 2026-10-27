@@ -28,7 +28,8 @@ const MAX_ENTRIES = 500
  * (signed) chat: only the author and the agent see it.
  *
  * Emits `user` (entry) when the user typed, `answer` (entry) when they
- * answered a form, and `connection` (boolean) when the panel came or went.
+ * answered a form, and `connection` (boolean) when the panel came, or was
+ * gone for `settleMs`: a reload of the class tab is no going.
  */
 export class Chat extends EventEmitter {
   entries: Entry[] = []
@@ -36,16 +37,19 @@ export class Chat extends EventEmitter {
   open: string | null = null
   private status = ''
   private panels = new Set<express.Response>()
+  private reported = false
+  private settling: NodeJS.Timeout | undefined
 
-  constructor(private file: string) {
+  constructor(private file: string, private settleMs = 0) {
     super()
     try {
       this.entries = JSON.parse(fs.readFileSync(file, 'utf8'))
     } catch {}
   }
 
+  /** Whether a panel is open, or was until less than `settleMs` ago; what it missed comes with the history. */
   get connected() {
-    return this.panels.size > 0
+    return this.reported
   }
 
   /** Posts a message; returns the id of its form if it has inputs. */
@@ -85,10 +89,15 @@ export class Chat extends EventEmitter {
       // a reload shows the whole chat again, with the open form and status
       res.write(`data: ${JSON.stringify({ type: 'history', entries: this.entries, open: this.open, status: this.status })}\n\n`)
       this.panels.add(res)
-      if (this.panels.size === 1) this.emit('connection', true)
+      clearTimeout(this.settling)
+      if (!this.reported) this.emit('connection', (this.reported = true))
       req.on('close', () => {
         this.panels.delete(res)
-        if (this.panels.size === 0) this.emit('connection', false)
+        if (this.panels.size) return
+        clearTimeout(this.settling)
+        this.settling = setTimeout(() => {
+          if (!this.panels.size && this.reported) this.emit('connection', (this.reported = false))
+        }, this.settleMs)
       })
     })
 
