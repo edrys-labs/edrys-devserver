@@ -1,6 +1,6 @@
 {
   "name": "@edryslabs/edrys-dev",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Develop edrys-Lite labs locally: serves edrys-Lite, syncs on its own port and republishes the class whenever the lab file changes",
   "type": "module",
   "bin": {
