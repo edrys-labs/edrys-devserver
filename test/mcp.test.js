@@ -21,9 +21,18 @@ function call(method, params = {}) {
   return new Promise((resolve) => answers.set(id, resolve))
 }
 
-async function tool(name, args = {}) {
-  const { result } = await call('tools/call', { name, arguments: args })
+function notify(method, params = {}) {
+  agent.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n')
+}
+
+async function tool(name, args = {}, meta) {
+  const { result } = await call('tools/call', { name, arguments: args, ...(meta ? { _meta: meta } : {}) })
   return { ...result, value: result.isError ? undefined : JSON.parse(result.content[0].text) }
+}
+
+async function untilNotification(test) {
+  for (let i = 0; i < 50 && !notifications.some(test); i++) await new Promise((r) => setTimeout(r, 20))
+  return notifications.find(test)
 }
 
 before(async () => {
@@ -47,10 +56,12 @@ after(() => {
 
 test('initialize offers tools and the channel, with a protocol version it knows', async () => {
   const { result } = await call('initialize', { protocolVersion: '2026-07-28' })
+  notify('notifications/initialized')
   assert.equal(result.protocolVersion, '2025-11-25')
   assert.deepEqual(result.capabilities.experimental, { 'claude/channel': {} })
   assert.match(result.instructions, /get_state/)
   assert.ok(result.instructions.length <= 2048)
+  assert.equal(result.serverInfo.version, JSON.parse(fs.readFileSync('package.json', 'utf8')).version)
 
   const { result: list } = await call('tools/list')
   assert.deepEqual(list.tools.map((t) => t.name), [
@@ -63,7 +74,62 @@ test('initialize offers tools and the channel, with a protocol version it knows'
     'run_in_module',
     'wait_for_event',
   ])
-  for (const t of list.tools) assert.ok(t.description.length <= 2048, t.name)
+  for (const t of list.tools) {
+    assert.ok(t.description.length <= 2048, t.name)
+    assert.equal(t.inputSchema.additionalProperties, false, t.name)
+    assert.equal(t.outputSchema.type, 'object', t.name)
+    assert.equal(typeof t.annotations.title, 'string', t.name)
+    assert.equal(typeof t.annotations.readOnlyHint, 'boolean', t.name)
+  }
+  const hints = Object.fromEntries(list.tools.map((t) => [t.name, t.annotations]))
+  assert.equal(hints.get_state.readOnlyHint, true)
+  assert.equal(hints.read_module_state.readOnlyHint, true)
+  assert.equal(hints.goto.openWorldHint, true)
+  assert.equal(hints.run_in_module.destructiveHint, true)
+  assert.equal(hints.chat.destructiveHint, false)
+})
+
+test('notifications wait until the client said initialized', { timeout: 10000 }, async () => {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-early-'))
+  fs.writeFileSync(path.join(own, 'lab.yml'), 'name: Early\n')
+  const early = spawn(process.execPath, ['dist/index.js', path.join(own, 'lab.yml'), '--mcp', '-p', '3280'], {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const got = []
+  readline.createInterface({ input: early.stdout }).on('line', (line) => got.push(JSON.parse(line)))
+  const send = (message) => early.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...message }) + '\n')
+  try {
+    await new Promise((resolve) => early.stderr.once('data', resolve))
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } })
+    const origin = 'http://127.0.0.1:3280'
+    await fetch(origin + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ type: 'error', message: 'too early' }),
+    })
+    await new Promise((r) => setTimeout(r, 200))
+    assert.ok(got.some((m) => m.id === 1))
+    assert.equal(got.filter((m) => m.method).length, 0)
+
+    send({ method: 'notifications/initialized' })
+    for (let i = 0; i < 50 && !got.some((m) => m.method); i++) await new Promise((r) => setTimeout(r, 20))
+    const channel = got.find((m) => m.method === 'notifications/claude/channel')
+    assert.deepEqual(JSON.parse(channel.params.content), { type: 'lab', ok: false, error: 'too early' })
+  } finally {
+    early.kill()
+    fs.rmSync(own, { recursive: true })
+  }
+})
+
+test('results carry structuredContent, and unknown arguments are errors', async () => {
+  const { result } = await call('tools/call', { name: 'get_state', arguments: {} })
+  assert.deepEqual(result.structuredContent, JSON.parse(result.content[0].text))
+
+  const typo = await tool('read_chat', { lst: 3 })
+  assert.equal(typo.isError, true)
+  assert.match(typo.content[0].text, /unknown argument lst; read_chat takes last/)
+  const input = await tool('chat', { markdown: 'x', inputs: [{ id: 'a', type: 'radio', options: ['1'], name: 'n' }] })
+  assert.match(input.content[0].text, /unknown input field name/)
 })
 
 test('get_state names the lab, the class tab and the event stream', async () => {
@@ -105,6 +171,31 @@ test('the event stream refuses browsers and wrong tokens', async () => {
   const { value: state } = await tool('get_state')
   assert.equal((await fetch(state.events, { headers: { Origin: 'http://localhost' } })).status, 403)
   assert.equal((await fetch(state.events.replace(/[0-9a-f]{32}$/, '0'.repeat(32)))).status, 403)
+})
+
+test('events a Monitor read are not queued for wait_for_event', async () => {
+  const { value: state } = await tool('get_state')
+  const base = new URL(state.url).origin.replace('localhost', '127.0.0.1')
+  const controller = new AbortController()
+  const stream = await fetch(state.events, { signal: controller.signal })
+  const reader = stream.body.getReader()
+  await fetch(base + '/edrys-dev/bridge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: base },
+    body: JSON.stringify({ type: 'applied', changed: false }),
+  })
+  const { value: chunk } = await reader.read()
+  controller.abort()
+  assert.deepEqual(JSON.parse(new TextDecoder().decode(chunk)), { type: 'lab', ok: true, changed: false })
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 0 })).value, { timeout: true })
+})
+
+test('a waiting wait_for_event reports progress when asked to', async () => {
+  const before = notifications.length
+  const waited = await tool('wait_for_event', { timeout_s: 1 }, { progressToken: 'w1' })
+  assert.deepEqual(waited.value, { timeout: true })
+  const progress = notifications.slice(before).find((n) => n.method === 'notifications/progress')
+  assert.deepEqual(progress.params, { progressToken: 'w1', progress: 0, total: 1, message: 'waiting for a browser event' })
 })
 
 test('wait_for_event times out, and tool errors come back as results', async () => {
@@ -259,6 +350,31 @@ test('read_chat returns what the panel shows, saved next to the lab', async () =
 
   const saved = JSON.parse(fs.readFileSync(path.join(dir, '.edrys-dev', 'chat.json'), 'utf8'))
   assert.deepEqual(saved.slice(-3), value.entries)
+})
+
+test('a form waits at most timeout_s, with progress; a later answer is an event', { timeout: 10000 }, async () => {
+  const panel = await openPanel(await base())
+  await panel.until((m) => m.type === 'history')
+
+  const before = notifications.length
+  const pending = tool(
+    'chat',
+    { markdown: 'Late?', inputs: [{ id: 'l', type: 'buttons', options: ['Yes'] }], timeout_s: 1 },
+    { progressToken: 7 }
+  )
+  const form = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'Late?')
+  const progress = await untilNotification((n, i) => i >= before && n.method === 'notifications/progress')
+  assert.deepEqual(progress.params, { progressToken: 7, progress: 0, total: 1, message: "waiting for the user's answer" })
+  assert.deepEqual((await pending).value, { ask: form.entry.ask, timeout: true })
+
+  // the form stays open
+  assert.equal((await panel.post({ ask: form.entry.ask, values: { l: 'Yes' } })).status, 204)
+  assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
+    type: 'answer',
+    ask: form.entry.ask,
+    values: { l: 'Yes' },
+  })
+  panel.close()
 })
 
 // a POST with headers fetch would not let through as they are (Host)

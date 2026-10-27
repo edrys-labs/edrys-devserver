@@ -13,6 +13,8 @@ import type { Entry } from './chat.js'
 // never answer 2026-07-28, see above
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 
+const VERSION: string = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+
 // Claude Code cuts this text and every tool description at 2048 characters.
 const INSTRUCTIONS = `edrys-dev serves an edrys-Lite lab (a classroom configuration, YAML or JSON, at get_state.lab) in the user's browser. The tab at get_state.url owns the class and republishes it whenever the lab file changes: edit the file with your own file tools, never ask the user to reload. Other browsers join through get_state.share.
 
@@ -35,7 +37,29 @@ const TOOLS = [
     name: 'get_state',
     description:
       'The lab and its class: lab (absolute path of the lab file), url (the class tab that owns the class; open it with browser automation or ask the user to), connected (whether that tab is open), class (what that tab sees: room is its own room, rooms maps every room to the users in it {name, role teacher|student|station, me}, modules the lab\'s modules by name or url; null before the tab joined), chat (whether its chat panel is loaded), share (link for other browsers, null until the tab opened the class), events (URL of the event stream for a Monitor tool, one JSON line per event) and watched (whether one reads it). Events that came while nobody read it are replayed to the next reader, up to 60 minutes back. messages is the number of saved chat entries: read_chat reads them. modules is {dir, url} of the local modules folder (null without one); local_urls the localhost URLs in the lab file, which nobody else can load; moved_urls those of a module in the folder on another port (left by an earlier run on other ports), each {url, now} with its address now: replace url with now in the lab.',
-    inputSchema: { type: 'object', properties: {} },
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        lab: { type: 'string' },
+        url: { type: 'string' },
+        connected: { type: 'boolean' },
+        class: { type: ['object', 'null'] },
+        chat: { type: 'boolean' },
+        share: { type: ['string', 'null'] },
+        events: { type: 'string' },
+        watched: { type: 'boolean' },
+        messages: { type: 'integer' },
+        modules: { type: ['object', 'null'], properties: { dir: { type: 'string' }, url: { type: 'string' } } },
+        local_urls: { type: 'array', items: { type: 'string' } },
+        moved_urls: {
+          type: 'array',
+          items: { type: 'object', properties: { url: { type: 'string' }, now: { type: 'string' } } },
+        },
+      },
+      required: ['lab', 'url', 'connected', 'class', 'chat', 'share', 'events', 'watched', 'modules'],
+    },
+    annotations: { title: 'Lab and class state', readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'goto',
@@ -48,12 +72,28 @@ const TOOLS = [
         as: { type: 'string', enum: ['student', 'station'] },
         open: { type: 'boolean', description: 'with as: false only returns the url' },
       },
+      additionalProperties: false,
     },
+    // room: the class after the move; as: the new tab
+    outputSchema: {
+      type: 'object',
+      properties: {
+        room: { type: ['string', 'null'] },
+        rooms: { type: 'object' },
+        modules: { type: 'array' },
+        url: { type: 'string' },
+        opened: { type: 'boolean' },
+        joined: { type: 'boolean' },
+        warning: { type: 'string' },
+      },
+    },
+    // as opens the default browser
+    annotations: { title: 'Move or open a class tab', readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   },
   {
     name: 'chat',
     description:
-      'Post a message into the chat panel over the class tab; only the user sees it, not the class. markdown is Markdown (sanitized, links open in a new tab). status alone updates the progress line below the messages; with markdown it stays after the message; every message without it clears it. With inputs the message carries a form and the call BLOCKS until the user answers: {ask, values: {<id>: option | [options]}}, or {ask, dismissed: true, text} if the user typed instead (the form stays open, a later answer arrives as an answer event), {ask, superseded: true} if a newer form replaced it, {ask, disconnected: true} if the panel closed. While a Monitor watches get_state.events, or with wait: false, it returns at once with {sent, ask} and the answer arrives as an answer event. Only the newest form stays open; close: true closes it (alone or with a message). buttons: one click answers (a single buttons input submits at once); radio: one option; checkbox: any number.',
+      'Post a message into the chat panel over the class tab; only the user sees it, not the class. markdown is Markdown (sanitized, links open in a new tab). status alone updates the progress line below the messages; with markdown it stays after the message; every message without it clears it. With inputs the message carries a form and the call BLOCKS until the user answers: {ask, values: {<id>: option | [options]}}, or {ask, dismissed: true, text} if the user typed instead (the form stays open, a later answer arrives as an answer event), {ask, superseded: true} if a newer form replaced it, {ask, disconnected: true} if the panel closed. While a Monitor watches get_state.events, or with wait: false, it returns at once with {sent, ask} and the answer arrives as an answer event. Only the newest form stays open; close: true closes it (alone or with a message). A form waits at most timeout_s (default 3600), then returns {ask, timeout: true}; it stays open and a later answer arrives as an answer event. buttons: one click answers (a single buttons input submits at once); radio: one option; checkbox: any number.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -71,18 +111,51 @@ const TOOLS = [
               options: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 20 },
             },
             required: ['id', 'type', 'options'],
+            additionalProperties: false,
           },
         },
         wait: { type: 'boolean', description: 'false returns a form at once with {sent, ask}' },
         close: { type: 'boolean', description: 'true closes the open form; returns its id as closed' },
+        timeout_s: { type: 'integer', minimum: 1, maximum: 3600, description: 'how long a form waits, default 3600' },
+      },
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        sent: { type: 'boolean' },
+        ask: { type: 'string' },
+        // the id of the form a close withdrew, or true for the call that waited on it
+        closed: { type: ['string', 'boolean', 'null'] },
+        values: { type: 'object' },
+        dismissed: { type: 'boolean' },
+        text: { type: 'string' },
+        superseded: { type: 'boolean' },
+        disconnected: { type: 'boolean' },
+        timeout: { type: 'boolean' },
       },
     },
+    annotations: { title: 'Chat with the user', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   },
   {
     name: 'read_chat',
     description:
       'The chat as the user sees it, saved in .edrys-dev/chat.json next to the lab and kept across restarts: {open, skipped, entries}. entries are in order, each with t (time) and type: ai {markdown, ask, inputs} for your messages (ask and inputs only for a form), user {text}, answer {ask, values}. open is the ask id of the one form the user can still answer; forms of earlier runs are closed, ask again if you need one. last limits it to the newest entries (default 50).',
-    inputSchema: { type: 'object', properties: { last: { type: 'integer', minimum: 1 } } },
+    inputSchema: {
+      type: 'object',
+      properties: { last: { type: 'integer', minimum: 1 } },
+      additionalProperties: false,
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        open: { type: ['string', 'null'] },
+        skipped: { type: 'integer' },
+        entries: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['open', 'skipped', 'entries'],
+    },
+    annotations: { title: 'Read the chat', readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'read_messages',
@@ -96,7 +169,18 @@ const TOOLS = [
         errors: { type: 'boolean' },
         last: { type: 'integer', minimum: 1 },
       },
+      additionalProperties: false,
     },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        dropped: { type: 'integer' },
+        skipped: { type: 'integer' },
+        entries: { type: 'array', items: { type: 'object' } },
+      },
+      required: ['dropped', 'skipped', 'entries'],
+    },
+    annotations: { title: 'Read module messages and errors', readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'read_module_state',
@@ -108,7 +192,13 @@ const TOOLS = [
         room: { type: 'string', description: 'e.g. "Room 1", "Lobby" or "Station xyz"' },
         key: { type: 'string' },
       },
+      additionalProperties: false,
     },
+    outputSchema: {
+      type: 'object',
+      properties: { room: { type: 'string' }, state: { type: 'object' }, key: { type: 'string' }, value: {} },
+    },
+    annotations: { title: 'Read the modules\' shared state', readOnlyHint: true, openWorldHint: false },
   },
   {
     name: 'run_in_module',
@@ -122,12 +212,23 @@ const TOOLS = [
         timeout_s: { type: 'integer', minimum: 1, maximum: 60 },
       },
       required: ['module', 'code'],
+      additionalProperties: false,
     },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        room: { type: ['string', 'null'] },
+        results: { type: 'array', items: { type: 'object', properties: { value: {}, error: { type: 'string' } } } },
+      },
+      required: ['room', 'results'],
+    },
+    // the code can do anything the user's page can, also fetch from elsewhere
+    annotations: { title: 'Run code in a local module', readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
   {
     name: 'wait_for_event',
     description:
-      'Returns the next queued browser event, or {timeout: true}. timeout_s: 0 polls without blocking. Polling does not wake an idle agent; call it between work steps.',
+      'Returns the next queued browser event, or {timeout: true}. timeout_s: 0 polls without blocking. Polling does not wake an idle agent; call it between work steps. Events a Monitor read are not queued; those that came as <channel> tags are, so with channels do not call it: you would get them twice.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -138,12 +239,22 @@ const TOOLS = [
           description: 'default 25 (Copilot CLI ends tool calls after 30), stay below the tool timeout of your client',
         },
       },
+      additionalProperties: false,
     },
+    // one of the events of the instructions, each with its own fields
+    outputSchema: { type: 'object', properties: { type: { type: 'string' }, timeout: { type: 'boolean' } } },
+    annotations: { title: 'Wait for a browser event', readOnlyHint: true, openWorldHint: false },
   },
 ]
 
 // A module that throws in a loop must not flood the agent.
 const ERROR_REPEAT_MS = 10_000
+
+// how often a blocking call tells a client that asked for it that it still waits
+const PROGRESS_MS = 10_000
+
+// notifications before the client said initialized, sent once it does
+const EARLY_MAX = 100
 
 // Events while nobody watched, for the next watcher. Not for long: an agent
 // that starts tomorrow must not act on the errors of today.
@@ -177,6 +288,8 @@ function checkInputs(inputs: any) {
   if (!Array.isArray(inputs) || inputs.length > 10) throw new Error('inputs must be an array of at most 10 entries')
   const ids: string[] = []
   for (const input of inputs) {
+    const unknown = Object.keys(input ?? {}).filter((key) => !['id', 'type', 'label', 'options'].includes(key))
+    if (unknown.length) throw new Error(`unknown input field ${unknown.join(', ')}; an input has id, type, label, options`)
     if (!input || !NAME.test(input.id) || ids.includes(input.id)) {
       throw new Error('input.id must be a unique name of letters, digits, _ or -')
     }
@@ -250,6 +363,32 @@ export function startMcp(server: DevServer, options: McpOptions) {
   const queue: object[] = []
   let waiter: { request: any; done: (event: object) => void } | null = null
 
+  // A client may not get notifications before it said initialized, so those
+  // wait, e.g. a lab error found while it starts.
+  let initialized = false
+  const early: object[] = []
+  function notify(message: object) {
+    if (initialized) out(message)
+    else if (early.push(message) > EARLY_MAX) early.shift()
+  }
+
+  /**
+   * Tells the client every PROGRESS_MS that a call still waits, if it passed
+   * a progressToken; returns the stop.
+   */
+  function progress(token: unknown, total: number, message: string) {
+    if (typeof token !== 'string' && typeof token !== 'number') return () => {}
+    const start = Date.now()
+    const tick = () =>
+      notify({
+        method: 'notifications/progress',
+        params: { progressToken: token, progress: Math.round((Date.now() - start) / 1000), total, message },
+      })
+    tick()
+    const timer = setInterval(tick, PROGRESS_MS)
+    return () => clearInterval(timer)
+  }
+
   function emit(event: object) {
     const line = JSON.stringify(event) + '\n'
     if (watchers.length) watchers.forEach((watcher) => watcher.write(line))
@@ -259,11 +398,12 @@ export function startMcp(server: DevServer, options: McpOptions) {
     }
 
     if (waiter) waiter.done(event)
-    else if (queue.push(event) > 20) queue.shift()
+    // a Monitor got it already
+    else if (!watchers.length && queue.push(event) > 20) queue.shift()
 
     // Claude Code turns this into a <channel> tag in the running session.
     // Without a registered channel it is dropped silently.
-    out({
+    notify({
       method: 'notifications/claude/channel',
       params: {
         // page text must not be able to close the channel tag
@@ -355,13 +495,17 @@ export function startMcp(server: DevServer, options: McpOptions) {
     }
   }
 
-  function sendChat(args: any, request: any) {
+  function sendChat(args: any, request: any, token: unknown) {
     const { markdown, status, inputs = [] } = args
     if (status !== undefined && (typeof status !== 'string' || status.length > 200)) {
       throw new Error('status must be a string of at most 200 characters')
     }
     if (args.wait !== undefined && typeof args.wait !== 'boolean') throw new Error('wait must be a boolean')
     if (args.close !== undefined && typeof args.close !== 'boolean') throw new Error('close must be a boolean')
+    const seconds = args.timeout_s === undefined ? 3600 : args.timeout_s
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 3600) {
+      throw new Error('timeout_s must be an integer from 1 to 3600')
+    }
 
     // withdraws the open form, also the one a call waits on
     const close = () => {
@@ -396,14 +540,19 @@ export function startMcp(server: DevServer, options: McpOptions) {
     if (args.wait === false || watchers.length) return { sent: true, ask: id }
 
     return new Promise((resolve) => {
+      const stop = progress(token, seconds, "waiting for the user's answer")
       const mine = {
         id,
         request,
         done: (answer: object) => {
+          clearTimeout(timer)
+          stop()
           if (ask === mine) ask = null
           resolve({ ask: id, ...answer })
         },
       }
+      // the form stays open: a later answer is an answer event
+      const timer = setTimeout(() => mine.done({ timeout: true }), seconds * 1000)
       ask = mine
     })
   }
@@ -538,7 +687,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
     }
   }
 
-  function waitForEvent(args: any, request: any) {
+  function waitForEvent(args: any, request: any, token: unknown) {
     const seconds = args.timeout_s === undefined ? 25 : args.timeout_s
     if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
       throw new Error('timeout_s must be an integer from 0 to 3600')
@@ -550,10 +699,12 @@ export function startMcp(server: DevServer, options: McpOptions) {
       // a second call replaces the first
       if (waiter) waiter.done({ timeout: true })
 
+      const stop = progress(token, seconds, 'waiting for a browser event')
       const mine = {
         request,
         done: (value: object) => {
           clearTimeout(timer)
+          stop()
           if (waiter === mine) waiter = null
           resolve(value)
         },
@@ -563,7 +714,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
     })
   }
 
-  const calls: { [name: string]: (args: any, request: any) => any } = {
+  const calls: { [name: string]: (args: any, request: any, token: unknown) => any } = {
     get_state: getState,
     goto,
     chat: sendChat,
@@ -582,7 +733,7 @@ export function startMcp(server: DevServer, options: McpOptions) {
           // Never add 'claude/channel/permission': it would let browser content
           // approve tool use in the session.
           capabilities: { tools: {}, experimental: { 'claude/channel': {} } },
-          serverInfo: { name: 'edrys-dev', version: '1' },
+          serverInfo: { name: 'edrys-dev', version: VERSION },
           instructions: INSTRUCTIONS,
         }
 
@@ -596,8 +747,17 @@ export function startMcp(server: DevServer, options: McpOptions) {
         if (!Object.hasOwn(calls, params.name)) throw fail(-32602, 'unknown tool: ' + params.name)
         // tool failures go into the result, so the model sees and corrects them
         try {
-          const value = await calls[params.name](params.arguments || {}, request)
-          return { content: [{ type: 'text', text: JSON.stringify(value) }] }
+          const args = params.arguments ?? {}
+          if (typeof args !== 'object' || Array.isArray(args)) throw new Error('arguments must be an object')
+          const known = Object.keys(TOOLS.find((t) => t.name === params.name)!.inputSchema.properties)
+          const unknown = Object.keys(args).filter((key) => !known.includes(key))
+          if (unknown.length) {
+            throw new Error(`unknown argument ${unknown.join(', ')}; ${params.name} takes ${known.join(', ') || 'none'}`)
+          }
+          const value = await calls[params.name](args, request, params._meta?.progressToken)
+          // the text for clients before 2025-06-18, which know no structuredContent
+          const structured = value && typeof value === 'object' && !Array.isArray(value)
+          return { content: [{ type: 'text', text: JSON.stringify(value) }], ...(structured ? { structuredContent: value } : {}) }
         } catch (error: any) {
           return { content: [{ type: 'text', text: error.message }], isError: true }
         }
@@ -636,6 +796,11 @@ export function startMcp(server: DevServer, options: McpOptions) {
       // a click on the abandoned form then arrives as an answer event
       if (ask && ask.request === request) ask.done({ cancelled: true })
       return
+    }
+    if (message?.method === 'notifications/initialized') {
+      if (initialized) return
+      initialized = true
+      return early.splice(0).forEach(out)
     }
     // other notifications and responses need no answer
     if (!message || message.id === undefined || typeof message.method !== 'string') return
