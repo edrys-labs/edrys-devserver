@@ -281,10 +281,11 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     moduleOrigins = [`http://localhost:${modulePort}`, `http://127.0.0.1:${modulePort}`, 'null']
 
     const stopWatchingModules = watchModules(dir, (name) => {
-      // the lab may name either local address
-      for (const host of ['localhost', '127.0.0.1']) {
-        send('reload-module', { url: `http://${host}:${modulePort}/${name}/` })
-      }
+      // the lab may name either local address; one event, so the class tab
+      // scrapes the module once
+      send('reload-module', {
+        urls: ['localhost', '127.0.0.1'].map((host) => `http://${host}:${modulePort}/${name}/`),
+      })
       for (const other of others) other.write('event: reload-module\ndata: {}\n\n')
       bus.emit('module-changed', name)
     })

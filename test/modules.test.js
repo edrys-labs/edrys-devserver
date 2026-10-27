@@ -69,8 +69,7 @@ test('a save in a module folder reloads that module, once', async () => {
 
   const port = server.port + 1
   assert.deepEqual(owner.events, [
-    { event: 'reload-module', data: { url: `http://localhost:${port}/term/` } },
-    { event: 'reload-module', data: { url: `http://127.0.0.1:${port}/term/` } },
+    { event: 'reload-module', data: { urls: [`http://localhost:${port}/term/`, `http://127.0.0.1:${port}/term/`] } },
   ])
   assert.deepEqual(student.events, [{ event: 'reload-module', data: {} }])
 })
