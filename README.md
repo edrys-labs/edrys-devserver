@@ -73,4 +73,4 @@ npm run build    # tsc → dist/
 npm test         # builds, then runs test/*.test.js
 ```
 
-For now edrys-Lite and the edrys websocket-server (optional, only used by `--local`) come from sibling checkouts (`file:../edrys-Lite`, `file:../websocket-server`); build edrys-Lite first (`npm run build` there), since its `dist/` is what edrys-dev serves, including the transport defaults from its `.env`.
+edrys-Lite comes from npm as [`@edryslabs/edrys-lite`](https://www.npmjs.com/package/@edryslabs/edrys-lite), pinned to one version: its `dist/` is what edrys-dev serves. To try changes to edrys-Lite, build it (`npm run build` there) and link the checkout with `npm install ../edrys-Lite`; pin the published version again afterwards. The edrys websocket-server (optional, only used by `--local`) still comes from a sibling checkout (`file:../websocket-server`).

@@ -99,7 +99,7 @@ const SETTLE_MS = 2000
 /** The built edrys-Lite this package serves. */
 export function edrysDist(): string {
   const require = createRequire(import.meta.url)
-  return path.join(path.dirname(require.resolve('edrys-lite/package.json')), 'dist')
+  return path.join(path.dirname(require.resolve('@edryslabs/edrys-lite/package.json')), 'dist')
 }
 
 /**
