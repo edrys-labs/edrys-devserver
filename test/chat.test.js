@@ -98,7 +98,46 @@ test('a chat.json that is no list of entries starts an empty chat', () => {
   const file = path.join(dir, 'mixed', 'chat.json')
   fs.mkdirSync(path.dirname(file))
   fs.writeFileSync(file, JSON.stringify([null, 3, { t: 1, type: 'user', text: 'hi' }]))
-  assert.deepEqual(new Chat(file).entries, [{ t: 1, type: 'user', text: 'hi' }])
+  assert.deepEqual(new Chat(file).entries, [{ t: 1, type: 'user', text: 'hi', n: 1 }])
+})
+
+test('entries are numbered, also those of a chat saved without numbers', async () => {
+  const file = path.join(dir, 'numbers', 'chat.json')
+  fs.mkdirSync(path.dirname(file))
+  fs.writeFileSync(file, JSON.stringify([{ t: 1, type: 'user', text: 'a' }, { t: 2, type: 'ai', markdown: 'b', n: 7 }, { t: 3, type: 'user', text: 'c', n: 2 }]))
+  const chat = new Chat(file)
+  assert.deepEqual(chat.entries.map((e) => e.n), [1, 7, 8])
+  chat.say('d')
+  assert.equal(chat.entries.at(-1).n, 9)
+  assert.deepEqual(chat.newerThan(1).map((e) => e.text), ['c'])
+  await chat.flush()
+})
+
+test('the status line waits for the agent and says when it does not react', async () => {
+  const chat = new Chat(path.join(dir, 'hints', 'chat.json'), 0, { noReaction: 50, quiet: 100 })
+  const panel = await serve(chat)
+  try {
+    await panel.post({ text: 'hello?' })
+    let history = await panel.history()
+    assert.equal(history.status, 'Waiting for the agent…')
+    await new Promise((r) => setTimeout(r, 80))
+    assert.match((await panel.history()).hint, /not reacted yet/)
+
+    // the agent took it: the hint goes, later another one says it still works
+    chat.activity()
+    history = await panel.history()
+    assert.deepEqual([history.status, history.hint], ['Thinking…', ''])
+    await new Promise((r) => setTimeout(r, 130))
+    assert.match((await panel.history()).hint, /still working/)
+
+    // its answer ends both
+    chat.say('Hi')
+    history = await panel.history()
+    assert.deepEqual([history.status, history.hint], ['', ''])
+  } finally {
+    await panel.close()
+    await chat.flush()
+  }
 })
 
 test('a burst of messages is saved once, later, and all of it on flush', async () => {

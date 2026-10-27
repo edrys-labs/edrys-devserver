@@ -15,10 +15,12 @@ export type Input = {
   options: string[]
 }
 
-export type Entry =
-  | { t: number; type: 'ai'; markdown: string; ask?: string; inputs?: Input[] }
-  | { t: number; type: 'user'; text: string }
-  | { t: number; type: 'answer'; ask: string; values: Record<string, string | string[]> }
+// n numbers the entries from 1 and stays when old ones are dropped
+export type Entry = { t: number; n: number } & (
+  | { type: 'ai'; markdown: string; ask?: string; inputs?: Input[] }
+  | { type: 'user'; text: string }
+  | { type: 'answer'; ask: string; values: Record<string, string | string[]> }
+)
 
 // what the saved chat keeps, oldest first out
 const MAX_ENTRIES = 500
@@ -29,6 +31,16 @@ const HISTORY_MAX = 1_000_000
 
 // a burst of messages is saved once
 const SAVE_MS = 300
+
+// The progress line says what the server knows: the message waits until an
+// agent takes it (Chat.activity()), and after a while without any sign of the
+// agent a hint below says so. As in LiaScript DevServer (src/lib.ts there).
+export const WAITING = 'Waiting for the agent…'
+export const THINKING = 'Thinking…'
+// the server cannot know whether an idle agent listens (a channel wakes it)
+const NO_REACTION = 'The agent has not reacted yet, maybe it is not connected. Your message is saved, it answers once it starts.'
+const QUIET = 'The agent is still working, this can take a while.'
+const HINT_MS = { noReaction: 30_000, quiet: 60_000 }
 
 /**
  * `values` if they answer `inputs`: only their ids, each with one of its
@@ -64,6 +76,11 @@ export class Chat extends EventEmitter {
   /** The inputs of the open form. */
   private form: Input[] = []
   private status = ''
+  private hint = ''
+  // a message of the user waits for the first sign of an agent
+  private pending = false
+  private quiet: NodeJS.Timeout | undefined
+  private next = 1
   private panels = new Set<express.Response>()
   private reported = false
   private settling: NodeJS.Timeout | undefined
@@ -71,7 +88,7 @@ export class Chat extends EventEmitter {
   // one write after the other, never two at once into the same file
   private saving = Promise.resolve()
 
-  constructor(private file: string, private settleMs = 0) {
+  constructor(private file: string, private settleMs = 0, private hintMs = HINT_MS) {
     super()
     try {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
@@ -80,6 +97,11 @@ export class Chat extends EventEmitter {
         this.entries = saved.filter((e) => e && typeof e === 'object' && typeof e.type === 'string').slice(-MAX_ENTRIES)
       }
     } catch {}
+    // numbers that go up, also in a chat of an older edrys-dev without them
+    for (const entry of this.entries) {
+      if (!Number.isInteger(entry.n) || entry.n < this.next) entry.n = this.next
+      this.next = entry.n + 1
+    }
   }
 
   /** Whether a panel is open, or was until less than `settleMs` ago; what it missed comes with the history. */
@@ -90,7 +112,7 @@ export class Chat extends EventEmitter {
   /** Posts a message; returns the id of its form if it has inputs. */
   say(markdown: string, inputs: Input[] = [], status?: string): string | undefined {
     const ask = inputs.length ? 'ask-' + crypto.randomBytes(4).toString('hex') : undefined
-    const entry: Entry = { t: Date.now(), type: 'ai', markdown, ...(ask ? { ask, inputs } : {}) }
+    const entry: Entry = { t: Date.now(), n: this.next++, type: 'ai', markdown, ...(ask ? { ask, inputs } : {}) }
     // only the newest form stays open
     if (ask) {
       this.closeForm()
@@ -105,14 +127,49 @@ export class Chat extends EventEmitter {
   setStatus(status: string) {
     this.status = status
     this.send({ type: 'status', text: status })
+    this.watchQuiet()
+  }
+
+  /**
+   * A sign of the agent: a tool call, or an event handed to it. A message
+   * that waited for it is now being worked on.
+   */
+  activity() {
+    this.pending = false
+    if (this.status === WAITING) this.setStatus(THINKING)
+    else this.watchQuiet()
+  }
+
+  /** The entries of the user (typed or answered) after entry `n`. */
+  newerThan(n: number): Entry[] {
+    return this.entries.filter((e) => e.n > n && e.type !== 'ai')
   }
 
   /** Withdraws the open form; returns its id, or null if there was none. */
-  closeForm(): string | null {
+  closeForm(reason?: string): string | null {
     const closed = this.open
     this.open = null
-    if (closed) this.send({ type: 'close', ask: closed })
+    if (closed) this.send({ type: 'close', ask: closed, ...(reason ? { reason } : {}) })
     return closed
+  }
+
+  // restarts the clock whenever something happens while a progress line shows
+  private watchQuiet() {
+    clearTimeout(this.quiet)
+    if (this.hint) this.send({ type: 'hint', text: (this.hint = '') })
+    if (!this.status) return
+    this.quiet = setTimeout(
+      () => this.send({ type: 'hint', text: (this.hint = this.pending ? NO_REACTION : QUIET) }),
+      this.pending ? this.hintMs.noReaction : this.hintMs.quiet
+    )
+    // a pending hint must not keep a stopped edrys-dev alive
+    this.quiet.unref()
+  }
+
+  // the user sees at once that the message arrived, until the agent takes it
+  private waitForAgent() {
+    this.pending = true
+    this.setStatus(WAITING)
   }
 
   routes(app: express.Express) {
@@ -125,7 +182,8 @@ export class Chat extends EventEmitter {
       // a reload shows the chat again, with the open form and status
       const entries = this.recent()
       const skipped = this.entries.length - entries.length
-      res.write(`data: ${JSON.stringify({ type: 'history', entries, skipped, open: this.open, status: this.status })}\n\n`)
+      const history = { type: 'history', entries, skipped, open: this.open, status: this.status, hint: this.hint }
+      res.write(`data: ${JSON.stringify(history)}\n\n`)
       this.panels.add(res)
       clearTimeout(this.settling)
       if (!this.reported) this.emit('connection', (this.reported = true))
@@ -144,8 +202,9 @@ export class Chat extends EventEmitter {
       const { text, ask, values } = req.body ?? {}
 
       if (typeof text === 'string' && text.trim()) {
-        const entry: Entry = { t: Date.now(), type: 'user', text: text.slice(0, 10000) }
+        const entry: Entry = { t: Date.now(), n: this.next++, type: 'user', text: text.slice(0, 10000) }
         this.add(entry)
+        this.waitForAgent()
         this.emit('user', entry)
         return res.sendStatus(204)
       }
@@ -154,8 +213,9 @@ export class Chat extends EventEmitter {
         const answer = validAnswer(this.form, values)
         if (!answer) return res.sendStatus(400)
         this.open = null
-        const entry: Entry = { t: Date.now(), type: 'answer', ask, values: answer }
+        const entry: Entry = { t: Date.now(), n: this.next++, type: 'answer', ask, values: answer }
         this.add(entry)
+        this.waitForAgent()
         this.emit('answer', entry)
         return res.sendStatus(204)
       }

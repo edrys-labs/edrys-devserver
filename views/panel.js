@@ -72,6 +72,9 @@
     }
     .msg form[aria-disabled="true"] { opacity: .5; pointer-events: none; }
     .status { padding: 0 12px 6px; font-size: 12px; color: var(--muted); min-height: 1em; }
+    .hint { padding: 0 12px 6px; font-size: 12px; color: var(--muted); font-style: italic; }
+    .hint:empty { display: none; }
+    .reason { margin-top: 4px; font-size: 12px; color: var(--muted); }
     .skipped { align-self: center; font-size: 12px; color: var(--muted); }
     .compose { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); }
     textarea {
@@ -96,6 +99,7 @@
         <header>Agent <small>edrys-dev, only you see this</small></header>
         <div class="log" role="log" aria-live="polite"></div>
         <div class="status" aria-live="polite"></div>
+        <div class="hint" aria-live="polite"></div>
         <form class="compose">
           <label for="text" hidden>Message to the agent</label>
           <textarea id="text" placeholder="Message to the agent (Enter sends)"></textarea>
@@ -109,6 +113,7 @@
   const panel = root.querySelector('.panel')
   const log = root.querySelector('.log')
   const statusLine = root.querySelector('.status')
+  const hintLine = root.querySelector('.hint')
   const compose = root.querySelector('.compose')
   const textarea = root.querySelector('textarea')
 
@@ -232,8 +237,17 @@
     return form
   }
 
-  function disable(ask) {
-    root.querySelectorAll(`form[data-ask="${ask}"]`).forEach((form) => form.setAttribute('aria-disabled', 'true'))
+  function disable(ask, reason) {
+    root.querySelectorAll(`form[data-ask="${ask}"]`).forEach((form) => {
+      form.setAttribute('aria-disabled', 'true')
+      // why the agent closed it, shown only live
+      if (reason && !form.nextElementSibling?.classList.contains('reason')) {
+        const note = document.createElement('div')
+        note.className = 'reason'
+        note.textContent = reason
+        form.after(note)
+      }
+    })
   }
 
   function show(entry) {
@@ -269,6 +283,7 @@
           }
           message.entries.forEach(show)
           statusLine.textContent = message.status
+          hintLine.textContent = message.hint || ''
           toggle.classList.remove('unread')
           break
         case 'entry':
@@ -279,9 +294,12 @@
         case 'status':
           statusLine.textContent = message.text
           break
+        case 'hint':
+          hintLine.textContent = message.text
+          break
         case 'close':
           if (open === message.ask) open = null
-          disable(message.ask)
+          disable(message.ask, message.reason)
           break
       }
     }

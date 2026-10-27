@@ -59,6 +59,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
   notify('notifications/initialized')
   assert.equal(result.protocolVersion, '2025-11-25')
   assert.deepEqual(result.capabilities.experimental, { 'claude/channel': {} })
+  assert.deepEqual(result.capabilities.prompts, {})
   assert.match(result.instructions, /get_state/)
   assert.ok(result.instructions.length <= 2048)
   assert.equal(result.serverInfo.version, JSON.parse(fs.readFileSync('package.json', 'utf8')).version)
@@ -87,6 +88,12 @@ test('initialize offers tools and the channel, with a protocol version it knows'
   assert.equal(hints.goto.openWorldHint, true)
   assert.equal(hints.run_in_module.destructiveHint, true)
   assert.equal(hints.chat.destructiveHint, false)
+
+  const { result: prompts } = await call('prompts/list')
+  assert.deepEqual(prompts.prompts.map((p) => p.name), ['chat'])
+  const { result: prompt } = await call('prompts/get', { name: 'chat' })
+  assert.match(prompt.messages[0].content.text, /wait_for_event/)
+  assert.equal((await call('prompts/get', { name: 'other' })).error.code, -32602)
 })
 
 test('notifications wait until the client said initialized', { timeout: 10000 }, async () => {
@@ -279,7 +286,7 @@ test('messages, forms and typed text between agent and panel', { timeout: 15000 
   })
   const form = await panel.until((m) => m.type === 'entry' && m.entry.ask)
   assert.equal((await panel.post({ ask: form.entry.ask, values: { board: 'ESP32' } })).status, 204)
-  assert.deepEqual((await pending).value, { ask: form.entry.ask, values: { board: 'ESP32' } })
+  assert.deepEqual((await pending).value, { ask: form.entry.ask, entry: form.entry.n + 1, values: { board: 'ESP32' } })
   // answered: the form is gone
   assert.equal((await panel.post({ ask: form.entry.ask, values: { board: 'Uno' } })).status, 409)
 
@@ -290,11 +297,13 @@ test('messages, forms and typed text between agent and panel', { timeout: 15000 
   })
   const secondForm = await panel.until((m) => m.type === 'entry' && m.entry.markdown === 'Ready?')
   await panel.post({ text: 'wait a moment' })
-  assert.deepEqual((await second).value, { ask: secondForm.entry.ask, dismissed: true, text: 'wait a moment' })
+  const n = secondForm.entry.n
+  assert.deepEqual((await second).value, { ask: secondForm.entry.ask, entry: n + 1, dismissed: true, text: 'wait a moment' })
   // its late answer is an event
   await panel.post({ ask: secondForm.entry.ask, values: { go: 'Yes' } })
   assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
     type: 'answer',
+    entry: n + 2,
     ask: secondForm.entry.ask,
     values: { go: 'Yes' },
   })
@@ -303,6 +312,7 @@ test('messages, forms and typed text between agent and panel', { timeout: 15000 
   await panel.post({ text: 'Why does Execute do nothing?' })
   assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
     type: 'chat',
+    entry: n + 3,
     text: 'Why does Execute do nothing?',
   })
 
@@ -376,9 +386,50 @@ test('a form waits at most timeout_s, with progress; a later answer is an event'
   assert.equal((await panel.post({ ask: form.entry.ask, values: { l: 'Yes' } })).status, 204)
   assert.deepEqual((await tool('wait_for_event', { timeout_s: 2 })).value, {
     type: 'answer',
+    entry: form.entry.n + 1,
     ask: form.entry.ask,
     values: { l: 'Yes' },
   })
+  panel.close()
+})
+
+test('reply_to returns what the user wrote since; close shows its reason', async () => {
+  const panel = await openPanel(await base())
+  await panel.until((m) => m.type === 'history')
+
+  await panel.post({ text: 'first' })
+  const first = (await tool('wait_for_event', { timeout_s: 2 })).value
+  await panel.post({ text: 'second' })
+  const answered = await tool('chat', { markdown: 'About the first…', reply_to: first.entry })
+  assert.deepEqual(
+    answered.value.newer_user_messages.map((e) => [e.n, e.type, e.text]),
+    [[first.entry + 1, 'user', 'second']]
+  )
+  // nothing newer: no list
+  const second = (await tool('wait_for_event', { timeout_s: 2 })).value
+  assert.deepEqual((await tool('chat', { markdown: 'And the second.', reply_to: second.entry })).value, { sent: true })
+
+  const form = await tool('chat', { markdown: 'Q?', inputs: [{ id: 'q', type: 'buttons', options: ['ok'] }], wait: false })
+  await tool('chat', { close: true, reason: 'Answered by your message' })
+  assert.deepEqual(
+    await panel.until((m) => m.type === 'close' && m.ask === form.value.ask),
+    { type: 'close', ask: form.value.ask, reason: 'Answered by your message' }
+  )
+  assert.match((await tool('chat', { markdown: 'x', reason: 'why' })).content[0].text, /reason needs close/)
+  assert.match((await tool('chat', { markdown: 'x', reply_to: 'a' })).content[0].text, /reply_to/)
+  panel.close()
+})
+
+test('a message waits for the agent until it calls a tool', async () => {
+  const panel = await openPanel(await base())
+  await panel.until((m) => m.type === 'history')
+  await panel.post({ text: 'are you there?' })
+  assert.ok(await panel.until((m) => m.type === 'status' && m.text === 'Waiting for the agent…'))
+  await tool('wait_for_event', { timeout_s: 2 })
+  assert.ok(await panel.until((m) => m.type === 'status' && m.text === 'Thinking…'))
+  // the answer clears it
+  await tool('chat', { markdown: 'yes' })
+  assert.equal(panel.messages.filter((m) => m.type === 'status').at(-1).text, '')
   panel.close()
 })
 
