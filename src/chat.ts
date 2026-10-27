@@ -114,7 +114,9 @@ export class Chat extends EventEmitter {
     })
 
     for (const [file, source] of Object.entries(PANEL_FILES)) {
-      app.get('/edrys-dev/' + file, (req, res) => res.sendFile(source()))
+      // dotfiles: sendFile checks the whole absolute path, and installs often
+      // live under one (~/.nvm, ~/.npm/_npx); the path is ours, not the request's
+      app.get('/edrys-dev/' + file, (req, res) => res.sendFile(source(), { dotfiles: 'allow' }))
     }
   }
 
