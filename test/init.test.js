@@ -8,8 +8,15 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process'
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-init-'))
 after(() => fs.rmSync(dir, { recursive: true }))
 
-// no TTY on stdin, so no question: the lab is named after its folder
-const init = (folder) => execFileSync(process.execPath, ['dist/index.js', 'init', folder], { stdio: ['ignore', 'pipe', 'pipe'] }).toString()
+// a home of its own, without the edrys skills unless a test adds them
+const home = path.join(dir, 'home')
+
+// no TTY on stdin, so no questions: the lab is named after its folder, the skills are left to the user
+const init = (folder) =>
+  execFileSync(process.execPath, ['dist/index.js', 'init', folder], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HOME: home, USERPROFILE: home },
+  }).toString()
 
 test('init sets up a new folder for an agent', () => {
   const lab = path.join(dir, 'My lab: one')
@@ -28,6 +35,16 @@ test('init sets up a new folder for an agent', () => {
   })
   assert.equal(read('.gitignore'), '.edrys-dev/\n')
   assert.match(out, /created {2}lab\.yml/)
+  assert.match(out, /To install them later: npx skills add edrys-labs\/skills/)
+})
+
+test('init leaves out the skills hint once they are installed', () => {
+  for (const name of ['edrys-lab', 'edrys-module']) fs.mkdirSync(path.join(home, '.agents', 'skills', name), { recursive: true })
+  try {
+    assert.doesNotMatch(init(path.join(dir, 'prepared')), /skills/)
+  } finally {
+    fs.rmSync(path.join(home, '.agents'), { recursive: true })
+  }
 })
 
 test('init keeps files that are there and adds to .gitignore once', () => {

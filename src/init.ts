@@ -1,6 +1,8 @@
 // edrys-dev init: a lab folder that an AI agent can start in, without writing
 // any config by hand. Files that exist are kept.
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline/promises'
 
@@ -51,15 +53,32 @@ const FILES: [string, (name: string) => string][] = [
   ['.claude/settings.json', () => JSON.stringify(SETTINGS, null, 2) + '\n'],
 ]
 
+// The edrys skills, for every lab of this user: in ~/.agents/skills, which
+// Copilot reads, linked into ~/.claude/skills. In the lab folder they would be
+// published with it.
+const SKILLS = ['-y', 'skills', 'add', 'edrys-labs/skills', '-g', '--skill', '*', '--agent', 'claude-code', 'github-copilot', '-y']
+const SKILLS_HINT = 'npx skills add edrys-labs/skills'
+
+function skillsInstalled() {
+  return ['.claude', '.agents'].some((dir) =>
+    ['edrys-lab', 'edrys-module'].every((name) => fs.existsSync(path.join(os.homedir(), dir, 'skills', name)))
+  )
+}
+
+async function ask(question: string) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  const answer = (await rl.question(question)).trim()
+  rl.close()
+  return answer
+}
+
 export async function init(folder: string, say: (line: string) => void = console.log) {
   const dir = path.resolve(folder)
   fs.mkdirSync(dir, { recursive: true })
 
   let name = path.basename(dir)
   if (process.stdin.isTTY && !fs.existsSync(path.join(dir, 'lab.yml'))) {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-    name = (await rl.question(`Name of your lab (${name}): `)).trim() || name
-    rl.close()
+    name = (await ask(`Name of your lab (${name}): `)) || name
   }
 
   for (const [file, content] of FILES) {
@@ -81,6 +100,16 @@ export async function init(folder: string, say: (line: string) => void = console
   } else if (!lines.split(/\r?\n/).some((line) => ['.edrys-dev', '.edrys-dev/', '/.edrys-dev/'].includes(line.trim()))) {
     fs.appendFileSync(ignore, (lines === '' || lines.endsWith('\n') ? '' : '\n') + '.edrys-dev/\n')
     say('  added    .edrys-dev/ to .gitignore')
+  }
+
+  if (!skillsInstalled()) {
+    const yes =
+      process.stdin.isTTY &&
+      /^(y|yes|)$/i.test(await ask('\nInstall the edrys skills, so your agent knows how labs and modules are written? (Y/n) '))
+    // npx is npx.cmd on Windows, which needs a shell
+    const run = yes && spawnSync('npx', SKILLS, { stdio: 'inherit', shell: process.platform === 'win32' })
+    if (run && run.status === 0) say('  installed the edrys skills')
+    else say(`\n${run ? 'Could not install the edrys skills. ' : ''}To install them later: ${SKILLS_HINT}`)
   }
 
   say(`

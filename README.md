@@ -95,7 +95,7 @@ The quick way, for a new lab:
 npx @edryslabs/edrys-dev init my-lab
 ```
 
-This makes the folder `my-lab` with a starter `lab.yml`, the agent configuration for Claude Code (`.mcp.json`) and VS Code Copilot (`.vscode/mcp.json`), instructions for the agent (`AGENTS.md`, `CLAUDE.md`), Claude Code settings that let the agent use edrys-dev and edit `lab.yml` and `modules/` without asking each time (`.claude/settings.json`), and a `.gitignore`. In a folder that already has some of these files, it keeps them. Then open the folder in your agent and write "start".
+This makes the folder `my-lab` with a starter `lab.yml`, the agent configuration for Claude Code (`.mcp.json`) and VS Code Copilot (`.vscode/mcp.json`), instructions for the agent (`AGENTS.md`, `CLAUDE.md`), Claude Code settings that let the agent use edrys-dev and edit `lab.yml` and `modules/` without asking each time (`.claude/settings.json`), and a `.gitignore`. In a folder that already has some of these files, it keeps them. If the edrys skills (step 2 below) are not installed yet, it offers to install them for you. Then open the folder in your agent and write "start".
 
 By hand:
 
