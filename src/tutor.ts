@@ -26,8 +26,10 @@ export type TutorOptions = {
   folder: string
   /** Absolute path of the lab file. */
   lab: string
+  /** The agent CLI that answers, default claude. */
+  agent?: TutorAgent
   model?: string
-  /** The agent CLI; tests put a stand-in here. */
+  /** The agent CLI's program, default its name; tests put a stand-in here. */
   command?: string
   concurrency?: number
   /** Questions per student per hour. */
@@ -37,6 +39,9 @@ export type TutorOptions = {
   roomState?: (room: string) => Promise<Record<string, any>>
 }
 
+export const TUTOR_AGENTS = ['claude', 'codex'] as const
+export type TutorAgent = (typeof TUTOR_AGENTS)[number]
+
 export const TEXT_MAX = 2000
 // what a thread keeps, oldest first out
 const THREAD_MAX = 200
@@ -45,6 +50,26 @@ const QUEUE_MAX = 30
 const HOUR = 3_600_000
 // characters of room state per question, as JSON
 export const STATE_MAX = 20000
+
+// codex has no list of allowed tools: everything that adds one is switched off
+// (checked with codex 0.165.0; a feature it no longer knows makes it fail)
+const CODEX_OFF = [
+  'shell_tool', 'unified_exec', 'view_image', 'multi_agent', 'goals', 'collaboration_modes', 'apps',
+  'plugins', 'hooks', 'browser_use', 'computer_use', 'image_generation', 'tool_suggest', 'skill_search',
+]
+// and everything that tells the model about this machine
+const CODEX_CONFIG = [
+  'sandbox_mode=read-only',
+  'approval_policy=never',
+  'web_search=disabled',
+  'skills.include_instructions=false',
+  'include_permissions_instructions=false',
+  'include_environment_context=false',
+  'include_collaboration_mode_instructions=false',
+  'include_apps_instructions=false',
+]
+// what a codex --json run may report; anything else is a tool it used
+const CODEX_ITEMS = ['agent_message', 'reasoning', 'error']
 
 const RULES = `You are the tutor of an edrys-Lite class: students ask you while they work through the lab below. Help each student learn: explain, give hints, ask back what they tried, point to the part of the lab that helps. Do not hand out whole solutions to tasks of the lab, unless the teacher's notes allow it. Answer short and friendly, in the language of the student, in Markdown.
 
@@ -70,8 +95,8 @@ function fileOf(student: string) {
 
 /**
  * The student tutor: answers each question with a headless agent CLI without
- * tools, MCP servers or settings (`claude -p`), apart from the authoring agent,
- * so students never reach files or shells. One agent session per student,
+ * tools, MCP servers or settings (`claude -p` or `codex exec`), apart from the
+ * authoring agent, so students never reach files or shells. One agent session per student,
  * resumed on their next question; their threads are saved in
  * .edrys-dev/tutor/. At most `concurrency` runs at once, one open question per
  * student and `perHour` an hour.
@@ -226,33 +251,39 @@ export class Tutor extends EventEmitter {
   private async run(thread: Thread, head: string, state: string | null | undefined): Promise<string> {
     const system = path.join(this.dir, 'system.md')
     await fsp.writeFile(system, await tutorPrompt(this.options.lab))
-    const resume = !!thread.session
-    if (!resume) thread.session = crypto.randomUUID()
-    const once = async (session: string, resume: boolean) => {
-      const answer = await this.claude(system, session, resume, this.message(session, head, state))
-      if (typeof state === 'string') this.sent.set(session, state)
-      return answer
+    // without a session, the agent starts one and tells which
+    const once = async (session?: string) => {
+      const prompt = this.message(session, head, state)
+      const result = await (this.options.agent === 'codex' ? this.codex(system, session, prompt) : this.claude(system, session, prompt))
+      thread.session = result.session
+      if (typeof state === 'string') this.sent.set(result.session, state)
+      return result.answer
     }
+    if (!thread.session) return once()
     try {
-      return await once(thread.session, resume)
-    } catch (error) {
+      return await once(thread.session)
+    } catch (error: any) {
+      // what a tool brought into the session must not come up in a later answer
+      if (error.tool) {
+        thread.session = ''
+        throw error
+      }
       // the agent's own session store may have lost it: start a new one
-      if (!resume) throw error
-      thread.session = crypto.randomUUID()
-      return once(thread.session, false)
+      return once()
     }
   }
 
   // the question and the room state, unless this session has that state already
-  private message(session: string, head: string, state: string | null | undefined) {
+  private message(session: string | undefined, head: string, state: string | null | undefined) {
     if (state === undefined) return head
     if (state === null) return `${head}\n\n(The room state could not be read this time.)`
-    if (this.sent.get(session) === state) return `${head}\n\n(The room state is unchanged since the last question.)`
+    if (session && this.sent.get(session) === state) return `${head}\n\n(The room state is unchanged since the last question.)`
     return `${head}\n\n<room-state>\n${state}\n</room-state>`
   }
 
-  private claude(system: string, session: string, resume: boolean, prompt: string): Promise<string> {
-    const args = [
+  private async claude(system: string, session: string | undefined, prompt: string): Promise<Answer> {
+    const id = session ?? crypto.randomUUID()
+    const { code, out, err } = await this.spawn([
       '-p',
       '--tools', '',
       '--strict-mcp-config',
@@ -261,40 +292,114 @@ export class Tutor extends EventEmitter {
       '--system-prompt-file', system,
       // the lab changes while the class runs: each question reads it anew
       '--system-prompt-snapshot', 'off',
-      resume ? '--resume' : '--session-id', session,
+      session ? '--resume' : '--session-id', id,
       '--output-format', 'json',
       ...(this.options.model ? ['--model', this.options.model] : []),
-    ]
+    ], prompt)
+    let result: any
+    try {
+      result = JSON.parse(out)
+    } catch {}
+    if (code === 0 && result && !result.is_error && typeof result.result === 'string') return { answer: result.result, session: id }
+    throw new Error(String(result?.result || err || `exit code ${code}`).trim().slice(0, 500))
+  }
+
+  // a new codex session answers with its id; the system prompt file is read on every run
+  private async codex(system: string, session: string | undefined, prompt: string): Promise<Answer> {
+    let id = session
+    let answer: string | undefined
+    let failure: string | undefined
+    // e.g. "Reconnecting...": the reason, if no answer comes
+    let notice: string | undefined
+    let tool: string | undefined
+    const { code, err } = await this.spawn([
+      'exec',
+      ...(session ? ['resume'] : []),
+      '--json',
+      '--skip-git-repo-check',
+      '--ignore-user-config',
+      '--ignore-rules',
+      '--strict-config',
+      ...CODEX_OFF.flatMap((feature) => ['--disable', feature]),
+      ...[...CODEX_CONFIG, `model_instructions_file=${tomlString(system)}`].flatMap((value) => ['-c', value]),
+      ...(this.options.model ? ['--model', this.options.model] : []),
+      ...(session ? [session] : []),
+      '-',
+    ], prompt, (event, stop) => {
+      if (event.type === 'thread.started' && typeof event.thread_id === 'string') id = event.thread_id
+      else if (event.type === 'turn.failed') failure = String(event.error?.message ?? 'the turn failed')
+      else if (event.type === 'error') notice = event.message
+      else if (/^item\./.test(event.type) && !CODEX_ITEMS.includes(event.item?.type)) {
+        // a tool it got after all, e.g. one a newer codex adds: stopped before its result reaches anyone
+        tool ??= String(event.item?.type)
+        stop()
+      } else if (event.type === 'item.completed' && event.item?.type === 'agent_message') answer = event.item.text
+    })
+    if (tool) throw Object.assign(new Error(`codex used a tool (${tool}), its answer was dropped: check the codex version`), { tool })
+    if (code === 0 && id && typeof answer === 'string' && !failure) return { answer, session: id }
+    throw new Error(String(failure || err || notice || `exit code ${code}`).trim().slice(0, 500))
+  }
+
+  // runs the agent CLI with the question on stdin: as an argument, one starting with - would be a flag
+  private spawn(
+    args: string[],
+    prompt: string,
+    onEvent?: (event: any, stop: () => void) => void
+  ): Promise<{ code: number | null; out: string; err: string }> {
+    const command = this.options.command ?? this.options.agent ?? 'claude'
     return new Promise((resolve, reject) => {
-      // the question goes through stdin: as an argument, one starting with - would be a flag
       // Windows starts claude.cmd through a shell, which drops empty arguments
       const quoted = process.platform === 'win32' ? args.map((a) => (a === '' || /\s/.test(a) ? `"${a}"` : a)) : args
-      const child = spawn(this.options.command ?? 'claude', quoted, {
+      const child = spawn(command, quoted, {
         cwd: this.work,
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32',
       })
       let out = ''
       let err = ''
-      child.stdout.on('data', (d) => (out += d))
+      let line = ''
+      let timedOut = false
+      const stop = () => child.kill()
+      child.stdout.on('data', (d) => {
+        out += d
+        if (!onEvent) return
+        const lines = (line + d).split('\n')
+        line = lines.pop()!
+        for (const text of lines) {
+          let event: any
+          try {
+            event = JSON.parse(text)
+          } catch {
+            continue
+          }
+          if (event && typeof event.type === 'string') onEvent(event, stop)
+        }
+      })
       child.stderr.on('data', (d) => (err += d))
-      const timer = setTimeout(() => child.kill(), this.options.timeoutMs ?? 120_000)
+      const timer = setTimeout(() => {
+        timedOut = true
+        stop()
+      }, this.options.timeoutMs ?? 120_000)
       child.on('error', (error) => {
         clearTimeout(timer)
-        reject(new Error(`the tutor could not start ${this.options.command ?? 'claude'}: ${error.message}`))
+        reject(new Error(`the tutor could not start ${command}: ${error.message}`))
       })
       child.on('close', (code) => {
         clearTimeout(timer)
-        let result: any
-        try {
-          result = JSON.parse(out)
-        } catch {}
-        if (code === 0 && result && !result.is_error && typeof result.result === 'string') return resolve(result.result)
-        reject(new Error(String(result?.result || err || `exit code ${code}`).trim().slice(0, 500)))
+        if (timedOut) return reject(new Error(`${command} gave no answer within ${(this.options.timeoutMs ?? 120_000) / 1000} s`))
+        resolve({ code, out, err })
       })
+      child.stdin.on('error', () => {})
       child.stdin.end(prompt)
     })
   }
+}
+
+type Answer = { answer: string; session: string }
+
+// a TOML literal string: no escapes, and no " for the shell on Windows
+function tomlString(text: string) {
+  return text.includes("'") ? JSON.stringify(text) : `'${text}'`
 }
 
 /**

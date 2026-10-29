@@ -65,7 +65,7 @@ export type DevServerOptions = {
   /** An agent is connected (--mcp): the class tab gets its chat panel. */
   agent?: boolean
   /** Students ask a tutor through the class tab (--tutor). */
-  tutor?: Pick<TutorOptions, 'model' | 'command' | 'concurrency' | 'perHour' | 'timeoutMs'>
+  tutor?: Pick<TutorOptions, 'agent' | 'model' | 'command' | 'concurrency' | 'perHour' | 'timeoutMs'>
 }
 
 export type DevServer = {

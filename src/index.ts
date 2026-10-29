@@ -7,6 +7,7 @@ import { startDevServer, type Report } from './server.js'
 import { startMcp, studentLink, localUrls } from './mcp.js'
 import { reachable } from './origin.js'
 import { readSaved } from './watch.js'
+import { TUTOR_AGENTS, type TutorAgent } from './tutor.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -29,10 +30,13 @@ Usage: edrys-dev [lab.yml] [options]
                       on, default https://edrys-labs.github.io/; it must use
                       the same transport (not with --local)
       --tutor         students get a tutor chat in the class, answered by
-                      Claude Code on this machine (claude -p, without
-                      tools); notes for it go into tutor.md next to the lab
+                      an AI agent on this machine, without tools; notes
+                      for it go into tutor.md next to the lab
+      --tutor-agent <claude|codex>
+                      the agent that answers: Claude Code (claude -p,
+                      the default) or Codex (codex exec)
       --tutor-model <model>
-                      the model the tutor uses, default claude's own
+                      the model the tutor uses, default the agent's own
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
@@ -52,6 +56,7 @@ const { values, positionals } = parseArgs({
     modules: { type: 'string', short: 'm' },
     'student-url': { type: 'string', default: 'https://edrys-labs.github.io/' },
     tutor: { type: 'boolean', default: false },
+    'tutor-agent': { type: 'string', default: 'claude' },
     'tutor-model': { type: 'string' },
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
@@ -91,7 +96,13 @@ if (!URL.canParse(studentSite) || !/^https?:$/.test(new URL(studentSite).protoco
   process.exit(1)
 }
 
-const nextToLab = path.join(path.dirname(lab), 'modules')
+const tutorAgent = values['tutor-agent'] as TutorAgent
+if (!TUTOR_AGENTS.includes(tutorAgent)) {
+  console.error(`edrys-dev: --tutor-agent must be ${TUTOR_AGENTS.join(' or ')}, not ${tutorAgent}`)
+  process.exit(1)
+}
+
+const nextToLab =path.join(path.dirname(lab), 'modules')
 const modules = values.modules ? path.resolve(values.modules) : fs.existsSync(nextToLab) ? nextToLab : undefined
 if (modules && !fs.statSync(modules, { throwIfNoEntry: false })?.isDirectory()) {
   console.error(`edrys-dev: no modules folder at ${modules}`)
@@ -105,7 +116,7 @@ const server = await startDevServer({
   local: values.local,
   modules,
   agent: values.mcp,
-  tutor: values.tutor ? { model: values['tutor-model'] } : undefined,
+  tutor: values.tutor ? { agent: tutorAgent, model: values['tutor-model'] } : undefined,
 })
 server.tutor?.on('failed', ({ name, error }) => console.error(`tutor: no answer for ${name}: ${error}`))
 server.tutor?.on('switch', (on) => say(`tutor: ${on ? 'on' : 'off'} (switched in the chat panel)`))
@@ -142,7 +153,7 @@ const host = ['127.0.0.1', '0.0.0.0', '::'].includes(values.host) ? 'localhost' 
 const url = `http://${host}:${server.port}/?dev`
 
 say(`edrys-dev: ${lab}\n  ${url}`)
-if (server.tutor) say(`tutor: on, notes for it in ${path.join(path.dirname(lab), 'tutor.md')}`)
+if (server.tutor) say(`tutor: on (${tutorAgent}), notes for it in ${path.join(path.dirname(lab), 'tutor.md')}`)
 if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}<name>/...`)
 if (reachable(values.host)) {
   console.error(

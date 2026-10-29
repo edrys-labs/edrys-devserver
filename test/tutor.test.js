@@ -168,6 +168,116 @@ test('room state beyond STATE_MAX is left out by key', () => {
   assert.equal(parsed.c, 3)
 })
 
+// stands in for codex exec: logs its arguments and stdin, answers as --json does
+const fakeCodex = path.join(dir, 'fake-codex.mjs')
+fs.writeFileSync(
+  fakeCodex,
+  `#!${process.execPath}
+import fs from 'node:fs'
+const args = process.argv.slice(2)
+let input = ''
+for await (const chunk of process.stdin) input += chunk
+const resume = args[1] === 'resume'
+const id = resume ? args.at(-2) : 'thread-' + Date.now() + '-' + Math.random().toString(16).slice(2)
+fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify({ args, input, cwd: process.cwd() }) + '\\n')
+const emit = (event) => process.stdout.write(JSON.stringify(event) + '\\n')
+if (input.includes('LOST') && resume) {
+  process.stderr.write('Error: thread/resume failed: no rollout found for thread id ' + id)
+  process.exit(1)
+}
+emit({ type: 'thread.started', thread_id: id })
+emit({ type: 'turn.started' })
+emit({ type: 'item.completed', item: { id: 'item_0', type: 'error', message: 'Model metadata not found' } })
+if (input.includes('FAIL')) {
+  emit({ type: 'turn.failed', error: { message: 'usage limit reached' } })
+  process.exit(1)
+}
+if (input.includes('RECONNECT')) emit({ type: 'error', message: 'Reconnecting... 1/5' })
+if (input.includes('TOOL')) {
+  emit({ type: 'item.started', item: { id: 'item_1', type: 'command_execution', command: 'cat ~/.ssh/id_rsa' } })
+  await new Promise((r) => setTimeout(r, 2000))
+  emit({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'LEAKED' } })
+  emit({ type: 'turn.completed' })
+  process.exit(0)
+}
+emit({ type: 'item.completed', item: { id: 'item_1', type: 'reasoning', text: 'thinking' } })
+emit({ type: 'item.completed', item: { id: 'item_2', type: 'agent_message', text: 'Codex: ' + input.split('\\n\\n')[0].split('\\n').slice(1).join(' ') } })
+emit({ type: 'turn.completed', usage: {} })
+`,
+  { mode: 0o755 }
+)
+const codexTutor = (options = {}) => tutor({ agent: 'codex', command: fakeCodex, ...options })
+const configs = (call) => call.args.flatMap((a, i) => (call.args[i - 1] === '-c' ? [a] : []))
+
+test('codex: a question runs codex exec with its tools switched off; the next one resumes its thread', async () => {
+  const t = codexTutor()
+  assert.equal(await ask(t, 'key-a', 'What is Ohm\'s law?'), 'Codex: What is Ohm\'s law?')
+  assert.equal(await ask(t, 'key-a', '--help'), 'Codex: --help')
+  const [first, second] = readCalls()
+
+  assert.deepEqual(first.args.slice(0, 2), ['exec', '--json'])
+  for (const flag of ['--ignore-user-config', '--ignore-rules', '--strict-config', '--skip-git-repo-check']) assert.ok(first.args.includes(flag), flag)
+  const disabled = first.args.flatMap((a, i) => (first.args[i - 1] === '--disable' ? [a] : []))
+  for (const feature of ['shell_tool', 'unified_exec', 'multi_agent', 'apps', 'plugins', 'hooks', 'browser_use', 'computer_use']) {
+    assert.ok(disabled.includes(feature), feature)
+  }
+  const config = configs(first)
+  for (const value of ['sandbox_mode=read-only', 'approval_policy=never', 'web_search=disabled', 'include_environment_context=false', 'skills.include_instructions=false']) {
+    assert.ok(config.includes(value), value)
+  }
+  const system = config.find((c) => c.startsWith('model_instructions_file=')).match(/^model_instructions_file='(.*)'$/)[1]
+  assert.match(fs.readFileSync(system, 'utf8'), /# The lab/)
+  // the question comes through stdin
+  assert.equal(first.args.at(-1), '-')
+  assert.ok(!second.args.includes('--help'))
+  assert.equal(first.input, '[student: Ada, room: Lobby]\nWhat is Ohm\'s law?')
+  assert.equal(fs.readdirSync(first.cwd).length, 0)
+
+  // codex names the thread; the next question resumes it with the same flags
+  const session = t.thread('key-a').session
+  assert.match(session, /^thread-/)
+  assert.deepEqual(second.args.slice(0, 3), ['exec', 'resume', '--json'])
+  assert.deepEqual(second.args.slice(-2), [session, '-'])
+  assert.deepEqual(configs(second), config)
+})
+
+test('codex: failures tell the teacher why, a lost thread starts anew, a reconnect is no failure', async () => {
+  const t = codexTutor()
+  const failed = []
+  t.on('failed', (f) => failed.push(f))
+  await assert.rejects(ask(t, 'key-a', 'FAIL'), /could not answer/)
+  assert.deepEqual(failed.map((f) => f.error), ['usage limit reached'])
+
+  assert.equal(await ask(t, 'key-a', 'first'), 'Codex: first')
+  const before = t.thread('key-a').session
+  assert.equal(await ask(t, 'key-a', 'LOST'), 'Codex: LOST')
+  const [, , resumed, fresh] = readCalls()
+  assert.equal(resumed.args.at(-2), before)
+  assert.notEqual(fresh.args[1], 'resume')
+  assert.notEqual(t.thread('key-a').session, before)
+
+  assert.equal(await ask(t, 'key-a', 'RECONNECT'), 'Codex: RECONNECT')
+})
+
+test('codex: a tool it uses after all stops the run, drops the answer and the thread\'s session', async () => {
+  const t = codexTutor()
+  const failed = []
+  t.on('failed', (f) => failed.push(f))
+  await ask(t, 'key-a', 'first')
+  const started = Date.now()
+  await assert.rejects(ask(t, 'key-a', 'TOOL'), /could not answer/)
+  // stopped at once, not after the fake's 2 s
+  assert.ok(Date.now() - started < 1500)
+  assert.match(failed[0].error, /codex used a tool \(command_execution\)/)
+  // not retried in a new session either
+  assert.equal(readCalls().length, 2)
+  assert.ok(!t.thread('key-a').entries.some((e) => e.text === 'LEAKED'))
+
+  // what the tool brought into that session stays there
+  await ask(t, 'key-a', 'after')
+  assert.notEqual(readCalls().at(-1).args[1], 'resume')
+})
+
 test('the class tab passes questions on and gets the answer by event', async () => {
   fs.rmSync(calls, { force: true })
   const server = await startDevServer({ lab, port: 3330, host: '127.0.0.1', tutor: { command: fake } })
