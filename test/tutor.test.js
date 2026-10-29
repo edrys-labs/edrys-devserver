@@ -502,6 +502,9 @@ test('read_student_chats returns the saved threads, newest first, filtered by na
   })
   fs.writeFileSync(path.join(own, '.edrys-dev', 'tutor', 'a.json'), JSON.stringify(thread('key-a', 'ada11111', 1000, 30)))
   fs.writeFileSync(path.join(own, '.edrys-dev', 'tutor', 'b.json'), JSON.stringify(thread('key-b', 'bob22222', 5000, 2)))
+  const long = thread('key-c', 'cem33333', 9000, 1)
+  long.entries[0].text = 'x'.repeat(3000)
+  fs.writeFileSync(path.join(own, '.edrys-dev', 'tutor', 'c.json'), JSON.stringify(long))
 
   const agent = spawn(process.execPath, ['dist/index.js', path.join(own, 'lab.yml'), '--mcp', '--tutor', '-p', '3340'], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -519,10 +522,15 @@ test('read_student_chats returns the saved threads, newest first, filtered by na
   }
   try {
     const all = await call('read_student_chats')
-    assert.deepEqual(all.threads.map((t) => [t.name, t.skipped, t.entries.length]), [['bob22222', 0, 2], ['ada11111', 10, 20]])
-    assert.equal(all.threads[1].entries.at(-1).text, 'ada11111 29')
-    const ada = await call('read_student_chats', { name: 'ada', last: 1 })
+    assert.equal(all.total, 3)
+    assert.deepEqual(all.threads.map((t) => [t.name, t.skipped, t.entries.length]), [['cem33333', 0, 1], ['bob22222', 0, 2], ['ada11111', 10, 20]])
+    assert.equal(all.threads[2].entries.at(-1).text, 'ada11111 29')
+    // long texts are cut, as read_module_state cuts strings
+    assert.equal(all.threads[0].entries[0].text, 'x'.repeat(1000) + '…(3000)')
+    const ada = await call('read_student_chats', { name: 'ADA', last: 1 })
     assert.deepEqual(ada.threads.map((t) => [t.name, t.entries.map((e) => e.text)]), [['ada11111', ['ada11111 29']]])
+    const newest = await call('read_student_chats', { threads: 1 })
+    assert.deepEqual([newest.total, newest.threads.map((t) => t.name)], [3, ['cem33333']])
   } finally {
     agent.kill()
     fs.rmSync(own, { recursive: true })
