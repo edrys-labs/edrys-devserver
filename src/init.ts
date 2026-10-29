@@ -62,6 +62,9 @@ const FILES: [string, (name: string, extra: string[]) => string][] = [
 // published with it.
 const SKILLS = ['-y', 'skills', 'add', 'edrys-labs/skills', '-g', '--skill', '*', '--agent', 'claude-code', 'github-copilot', '-y']
 const SKILLS_HINT = 'npx skills add edrys-labs/skills'
+// only these two, not the user's other skills; it changes nothing that is up to date
+const UPDATE = ['-y', 'skills', 'update', 'edrys-lab', 'edrys-module', '-g', '-y']
+const UPDATE_HINT = 'npx skills update edrys-lab edrys-module -g'
 
 function skillsInstalled() {
   return ['.claude', '.agents'].some((dir) =>
@@ -116,6 +119,10 @@ export async function init(folder: string, extra: string[] = [], say: (line: str
     const run = yes && spawnSync('npx', SKILLS, { stdio: 'inherit', shell: process.platform === 'win32' })
     if (run && run.status === 0) say('  installed the edrys skills')
     else say(`\n${run ? 'Could not install the edrys skills. ' : ''}To install them later: ${SKILLS_HINT}`)
+  } else if (process.stdin.isTTY) {
+    say('\nChecking the edrys skills for updates...')
+    const run = spawnSync('npx', UPDATE, { stdio: 'inherit', shell: process.platform === 'win32' })
+    if (run.status !== 0) say(`Could not check the edrys skills for updates. To do it later: ${UPDATE_HINT}`)
   }
 
   say(`
