@@ -168,7 +168,7 @@ Start edrys-dev with `--tutor`, and your students get a 🤖 button in the class
 - **Each student has their own conversation**, which continues with the next question. Chats are saved in `.edrys-dev/tutor/`. Your agent can read them with `read_student_chats` and tell you where students get stuck.
 - **Limits.** At most two answers are written at once. Each student can have one open question and up to 20 questions an hour, of up to 2000 characters each.
 - **Cost.** Each question uses your Claude account. `--tutor-model` picks a cheaper model, e.g. `--tutor-model haiku`. Check whether your plan's terms allow answering students with it, or use an API key.
-- **Privacy.** Students are told that an AI on your computer answers and that you can read the chat. On the default connection a question goes only to your tab. If you switched the class to a WebSocket server, other members of the class could catch the messages.
+- **Privacy.** Students are told that an AI on your computer answers and that you can read the chat. Questions and answers are encrypted between the student's browser and your tab, on every connection. Other members of the class can't read them, and neither can a WebSocket server that relays the class.
 
 ## Options
 
