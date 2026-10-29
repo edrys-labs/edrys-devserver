@@ -151,8 +151,22 @@ For safety, the chat only accepts messages from the class page on your own compu
 | `chat`, `read_chat` | write to you in the class chat, read your messages |
 | `read_messages` | messages between modules, and errors from your own modules |
 | `read_module_state` | what the modules share in a room |
+| `read_student_chats` | what students asked the tutor and what it answered (with `--tutor`) |
 | `run_in_module` | run JavaScript inside one of your own modules, only when you ask for it |
 | `wait_for_event` | wait for the next thing that happens in the class |
+
+## A tutor for your students
+
+Start edrys-dev with `--tutor`, and your students get a 🤖 button in the class. What they ask there is answered by an AI on your computer: [Claude Code](https://claude.com/claude-code) must be installed and signed in (`claude` in a terminal). Students need nothing but the class link.
+
+- **It knows the lab.** The tutor reads `lab.yml` with every question, so it always knows the version the class shows. It gives hints and explanations instead of whole solutions.
+- **Notes only for the tutor.** Put a file `tutor.md` next to `lab.yml`, for example "Task 2 is about Ohm's law, don't give the number". Students don't receive this file. A student who tries hard may still get the tutor to repeat it, so keep secrets out of it.
+- **It cannot do anything but answer.** It runs as a separate `claude` without tools, MCP servers or your settings. A student cannot reach your files, your shell or the agent that edits your lab.
+- **Your `/?dev` tab passes the messages on.** Keep it open. The button shows only while it is, and only on an edrys-Lite new enough to have it, on your computer and on the students' site alike.
+- **Each student has their own conversation**, which continues with the next question. Chats are saved in `.edrys-dev/tutor/`. Your agent can read them with `read_student_chats` and tell you where students get stuck.
+- **Limits.** At most two answers are written at once. Each student can have one open question and up to 20 questions an hour, of up to 2000 characters each.
+- **Cost.** Each question uses your Claude account. `--tutor-model` picks a cheaper model, e.g. `--tutor-model haiku`. Check whether your plan's terms allow answering students with it, or use an API key.
+- **Privacy.** Students are told that an AI on your computer answers and that you can read the chat. On the default connection a question goes only to your tab. If you switched the class to a WebSocket server, other members of the class could catch the messages.
 
 ## Options
 
@@ -168,6 +182,8 @@ edrys-dev [lab.yml] [options]
 | `--local` | off | connect the class through edrys-dev instead of the internet; works offline |
 | `-m, --modules <dir>` | `./modules`, if it exists | folder with your own modules |
 | `--student-url <url>` | `https://edrys-labs.github.io/` | the edrys-Lite site in the link for students |
+| `--tutor` | off | a tutor chat for students, answered by Claude Code on your computer |
+| `--tutor-model <model>` | Claude Code's default | the model the tutor uses |
 | `--host <host>` | `127.0.0.1` | `0.0.0.0` lets others on your network open the class (and, with `--mcp`, write to your agent) |
 | `--mcp` | off | for AI agents; set it in `.mcp.json`, see above |
 | `-h, --help` | | show help |

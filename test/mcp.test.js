@@ -71,6 +71,7 @@ test('initialize offers tools and the channel, with a protocol version it knows'
     'chat',
     'read_chat',
     'read_messages',
+    'read_student_chats',
     'read_module_state',
     'run_in_module',
     'wait_for_event',
@@ -204,6 +205,12 @@ test('a waiting wait_for_event reports progress when asked to', async () => {
   assert.deepEqual(waited.value, { timeout: true })
   const progress = notifications.slice(before).find((n) => n.method === 'notifications/progress')
   assert.deepEqual(progress.params, { progressToken: 'w1', progress: 0, total: 1, message: 'waiting for a browser event' })
+})
+
+test('read_student_chats needs the tutor', async () => {
+  const result = await tool('read_student_chats')
+  assert.equal(result.isError, true)
+  assert.match(result.content[0].text, /without --tutor/)
 })
 
 test('wait_for_event times out, and tool errors come back as results', async () => {

@@ -28,6 +28,11 @@ Usage: edrys-dev [lab.yml] [options]
                       the edrys-Lite site students on other machines join
                       on, default https://edrys-labs.github.io/; it must use
                       the same transport (not with --local)
+      --tutor         students get a tutor chat in the class, answered by
+                      Claude Code on this machine (claude -p, without
+                      tools); notes for it go into tutor.md next to the lab
+      --tutor-model <model>
+                      the model the tutor uses, default claude's own
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
@@ -46,6 +51,8 @@ const { values, positionals } = parseArgs({
     local: { type: 'boolean', default: false },
     modules: { type: 'string', short: 'm' },
     'student-url': { type: 'string', default: 'https://edrys-labs.github.io/' },
+    tutor: { type: 'boolean', default: false },
+    'tutor-model': { type: 'string' },
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -98,7 +105,9 @@ const server = await startDevServer({
   local: values.local,
   modules,
   agent: values.mcp,
+  tutor: values.tutor ? { model: values['tutor-model'] } : undefined,
 })
+server.tutor?.on('failed', ({ name, error }) => console.error(`tutor: no answer for ${name}: ${error}`))
 
 // Ctrl+C, or a process manager or agent client stopping it; the chat is saved
 // first. Before anything is printed: whoever waits for that may stop it at once.
@@ -132,6 +141,7 @@ const host = ['127.0.0.1', '0.0.0.0', '::'].includes(values.host) ? 'localhost' 
 const url = `http://${host}:${server.port}/?dev`
 
 say(`edrys-dev: ${lab}\n  ${url}`)
+if (server.tutor) say(`tutor: on, notes for it in ${path.join(path.dirname(lab), 'tutor.md')}`)
 if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}<name>/...`)
 if (reachable(values.host)) {
   console.error(

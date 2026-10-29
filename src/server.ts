@@ -10,6 +10,7 @@ import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, explain, panelFiles, panelScript } from './chat.js'
+import { Tutor, type TutorOptions } from './tutor.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -63,6 +64,8 @@ export type DevServerOptions = {
   modules?: string
   /** An agent is connected (--mcp): the class tab gets its chat panel. */
   agent?: boolean
+  /** Students ask a tutor through the class tab (--tutor). */
+  tutor?: Pick<TutorOptions, 'model' | 'command' | 'concurrency' | 'perHour' | 'timeoutMs'>
 }
 
 export type DevServer = {
@@ -75,6 +78,8 @@ export type DevServer = {
   bus: EventEmitter
   /** The agent chat over the class tab. */
   chat: Chat
+  /** The student tutor, null without --tutor. */
+  tutor: Tutor | null
   /**
    * Whether the owner tab is connected, the share link and the class (own
    * room, who is in which room, modules) it reported last.
@@ -140,6 +145,8 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     res.json({
       path: options.lab,
       text: await readSaved(options.lab),
+      // the class tab announces it to the students
+      tutor: !!tutor,
       // Without it the class keeps its own (or edrys-Lite's default) transport.
       communication: options.local
         ? { communicationMethod: 'Websocket', websocketUrl: `ws://${req.headers.host}` }
@@ -195,6 +202,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     // the user may not see the terminal or the agent: the chat panel says it too
     if (report.type === 'error') chat.labProblem(explain(String(report.message)))
     if (report.type === 'applied') chat.labProblem(null)
+    if (report.type === 'tutor-ask') askTutor(report)
     if (report.type === 'messages' && Array.isArray(report.messages)) {
       for (const m of report.messages) addLog({ ...m, body: readableBody(m.body), kind: 'message' })
       dropped += Number(report.dropped) || 0
@@ -231,7 +239,21 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     res.sendStatus(204)
   })
 
-  const chat = new Chat(path.join(path.dirname(options.lab), '.edrys-dev'), SETTLE_MS)
+  const folder = path.join(path.dirname(options.lab), '.edrys-dev')
+  const tutor = options.tutor ? new Tutor({ ...options.tutor, folder, lab: options.lab }) : null
+  // a question a student sent to the class tab, which passes the answer on
+  const askTutor = (report: Report) => {
+    const { id, student, name, room, text } = report
+    if (![id, student, name, room, text].every((value) => typeof value === 'string')) return
+    const answer = (result: { text: string } | { error: string }) => send('tutor-answer', { id, student, ...result })
+    if (!tutor) return answer({ error: 'There is no tutor in this class.' })
+    tutor.ask({ student, name, room, text }).then(
+      (text) => answer({ text }),
+      (error) => answer({ error: error.message })
+    )
+  }
+
+  const chat = new Chat(folder, SETTLE_MS)
   // without an agent, nobody would answer
   if (options.agent) chat.routes(app)
   panelFiles(app)
@@ -304,6 +326,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     app,
     bus,
     chat,
+    tutor,
     state: () => ({ connected: clients.size > 0, share, class: classState }),
     send,
     request,
@@ -318,6 +341,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       server.closeAllConnections()
       await new Promise((resolve) => server.close(resolve))
       await chat.flush()
+      await tutor?.flush()
     },
   }
 }
