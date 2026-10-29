@@ -44,6 +44,8 @@ test('hands out the lab, leaving its transport alone', async () => {
   assert.equal(lab_.path, lab)
   assert.equal(lab_.text, 'name: One\n')
   assert.equal(lab_.communication, undefined)
+  // the class tab's links for students stay on this page: no site given
+  assert.equal(lab_.studentSite, null)
 })
 
 test('no sync server unless --local', async () => {
@@ -99,6 +101,7 @@ test('the chat panel gets the students\' link, again when the class opens and th
     }
     await until(1)
     assert.deepEqual(seen[0], { reachable: true, link: null, local_urls: [] })
+    assert.equal((await (await fetch(origin + '/edrys-dev/lab')).json()).studentSite, 'https://edrys-labs.github.io/')
 
     await fetch(origin + '/edrys-dev/bridge', {
       method: 'POST',
