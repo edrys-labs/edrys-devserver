@@ -10,7 +10,7 @@ import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, explain, panelFiles, panelScript } from './chat.js'
-import { Tutor, type TutorOptions } from './tutor.js'
+import { Tutor, threadId, type TutorOptions } from './tutor.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -102,6 +102,9 @@ export type DevServer = {
 // A reload closes the owner tab's stream and opens a new one within a moment;
 // only a change that lasts this long counts.
 const SETTLE_MS = 2000
+// what the chat panel shows of the students' tutor threads
+const TUTOR_THREADS = 50
+const TUTOR_ENTRIES = 50
 
 /** The built edrys-Lite this package serves. */
 export function edrysDist(): string {
@@ -146,7 +149,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       path: options.lab,
       text: await readSaved(options.lab),
       // the class tab announces it to the students
-      tutor: !!tutor,
+      tutor: !!tutor?.enabled,
       // Without it the class keeps its own (or edrys-Lite's default) transport.
       communication: options.local
         ? { communicationMethod: 'Websocket', websocketUrl: `ws://${req.headers.host}` }
@@ -261,6 +264,49 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     )
   }
 
+  // the teacher's view of the tutor in the chat panel: the students' threads
+  // live, and the switch
+  if (tutor) {
+    const watchers = new Set<express.Response>()
+    const tell = (message: object) => {
+      for (const watcher of watchers) watcher.write(`data: ${JSON.stringify(message)}\n\n`)
+    }
+    const snapshot = () => ({
+      type: 'threads',
+      on: tutor.enabled,
+      threads: tutor.threadsList().slice(0, TUTOR_THREADS).map((thread) => ({
+        id: threadId(thread.student),
+        name: thread.name,
+        skipped: Math.max(0, thread.entries.length - TUTOR_ENTRIES),
+        entries: thread.entries.slice(-TUTOR_ENTRIES),
+      })),
+    })
+    tutor.on('entry', ({ student, name, entry }) => tell({ type: 'entry', id: threadId(student), name, entry }))
+    tutor.on('failed', ({ student, name, error }) => tell({ type: 'failed', id: threadId(student), name, error }))
+    tutor.on('switch', (on) => {
+      tell({ type: 'on', on })
+      // the class tab reads the lab again, and with it whether to offer the tutor
+      send('reload-lab', {})
+    })
+
+    app.get('/edrys-dev/tutor/events', (req, res) => {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+      res.write(`data: ${JSON.stringify(snapshot())}\n\n`)
+      watchers.add(res)
+      req.on('close', () => watchers.delete(res))
+    })
+    app.post('/edrys-dev/tutor', express.json(), (req, res) => {
+      if (!sameOrigin(req)) return res.sendStatus(403)
+      if (typeof req.body?.on !== 'boolean') return res.sendStatus(400)
+      tutor.setOn(req.body.on)
+      res.sendStatus(204)
+    })
+  }
+
   const chat = new Chat(folder, SETTLE_MS)
   // without an agent, nobody would answer
   if (options.agent) chat.routes(app)
@@ -269,7 +315,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   // edrys-Lite's page, with panel.js (the chat shows only in the class tab)
   app.get(['/', '/index.html'], async (req, res) => {
     const page = await fs.readFile(path.join(edrysDist(), 'index.html'), 'utf8')
-    res.type('html').send(page + panelScript(!!options.agent))
+    res.type('html').send(page + panelScript(!!options.agent, !!tutor))
   })
 
   app.use(express.static(edrysDist()))

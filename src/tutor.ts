@@ -59,9 +59,13 @@ export async function tutorPrompt(lab: string): Promise<string> {
   return `${RULES}\n\n# The lab (${path.basename(lab)})\n\n${text}` + (notes.trim() ? `\n\n# Teacher's notes\n\n${notes}` : '')
 }
 
-/** The thread's file name: the key itself may not fit in one. */
+/** A short id of a student's thread, also its file name: the key itself may not fit in one. */
+export function threadId(student: string) {
+  return crypto.createHash('sha256').update(student).digest('hex').slice(0, 16)
+}
+
 function fileOf(student: string) {
-  return crypto.createHash('sha256').update(student).digest('hex').slice(0, 16) + '.json'
+  return threadId(student) + '.json'
 }
 
 /**
@@ -72,8 +76,9 @@ function fileOf(student: string) {
  * .edrys-dev/tutor/. At most `concurrency` runs at once, one open question per
  * student and `perHour` an hour.
  *
- * Emits `entry` ({student, name, entry}) for every question and answer, and
- * `failed` ({student, name, error}) when the agent could not answer.
+ * Emits `entry` ({student, name, entry}) for every question and answer,
+ * `failed` ({student, name, error}) when the agent could not answer, and
+ * `switch` (on) when the teacher turned it on or off.
  */
 export class Tutor extends EventEmitter {
   private dir: string
@@ -87,6 +92,8 @@ export class Tutor extends EventEmitter {
   // the room state each session got last; a restart sends it again
   private sent = new Map<string, string>()
   private saving = Promise.resolve()
+  /** Off, it answers no questions, and the class tab no longer offers it. */
+  enabled = true
 
   constructor(private options: TutorOptions) {
     super()
@@ -126,8 +133,15 @@ export class Tutor extends EventEmitter {
     return [...all.values()].sort((a, b) => (b.entries.at(-1)?.t ?? 0) - (a.entries.at(-1)?.t ?? 0))
   }
 
+  setOn(on: boolean) {
+    if (on === this.enabled) return
+    this.enabled = on
+    this.emit('switch', on)
+  }
+
   /** Answers a question; rejects with a message for the student. */
   async ask(question: Question): Promise<string> {
+    if (!this.enabled) throw new Error('The tutor is off. Ask your teacher.')
     const text = question.text.trim()
     if (!text) throw new Error('The question is empty.')
     if (text.length > TEXT_MAX) throw new Error(`The question is too long (at most ${TEXT_MAX} characters).`)

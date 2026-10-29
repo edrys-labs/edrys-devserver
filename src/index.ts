@@ -108,6 +108,7 @@ const server = await startDevServer({
   tutor: values.tutor ? { model: values['tutor-model'] } : undefined,
 })
 server.tutor?.on('failed', ({ name, error }) => console.error(`tutor: no answer for ${name}: ${error}`))
+server.tutor?.on('switch', (on) => say(`tutor: ${on ? 'on' : 'off'} (switched in the chat panel)`))
 
 // Ctrl+C, or a process manager or agent client stopping it; the chat is saved
 // first. Before anything is printed: whoever waits for that may stop it at once.
@@ -146,7 +147,8 @@ if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}
 if (reachable(values.host)) {
   console.error(
     `edrys-dev: listening on ${values.host}, not only on this machine: others on the network can open the class` +
-      (values.mcp ? ' and type to the agent in its chat' : '')
+      (values.mcp ? ', type to the agent in its chat' : '') +
+      (values.tutor ? ', read the students\' tutor chats and switch the tutor' : '')
   )
 }
 if (values.mcp) startMcp(server, { lab, url, studentSite: values.local ? null : studentSite })

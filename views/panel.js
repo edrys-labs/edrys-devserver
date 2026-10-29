@@ -10,10 +10,15 @@
     }
     return
   }
-  // the chat only with an agent to answer it (edrys-dev --mcp)
-  if (!document.currentScript || !document.currentScript.hasAttribute('data-chat')) return
+  // the chat only with an agent to answer it (edrys-dev --mcp), the students
+  // view only with a tutor (--tutor)
+  const script = document.currentScript
+  const hasChat = !!script && script.hasAttribute('data-chat')
+  const hasTutor = !!script && script.hasAttribute('data-tutor')
+  if (!hasChat && !hasTutor) return
 
   const OPEN_KEY = 'edrys-dev:chat-open'
+  const VIEW_KEY = 'edrys-dev:chat-view'
 
   const css = `
     :host { all: initial; }
@@ -53,6 +58,31 @@
       font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;
     }
     header small { font-weight: 400; color: var(--muted); white-space: nowrap; }
+    .tabs { display: flex; gap: 2px; }
+    .tabs button {
+      font: inherit; font-size: 13px; padding: 3px 8px; border-radius: 6px; cursor: pointer;
+      border: 1px solid transparent; background: transparent; color: var(--muted);
+    }
+    .tabs button[aria-selected="true"] { border-color: var(--line); color: var(--fg); font-weight: 600; }
+    .tabs .count { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 2px; border-radius: 8px;
+      background: #e0452b; color: #fff; font-size: 11px; font-weight: 600; }
+    .tabs .count:empty { display: none; }
+    .spacer { flex: 1; }
+    .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+    .view[hidden] { display: none; }
+    .switch { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .switch label { display: flex; gap: 6px; align-items: center; font-weight: 600; }
+    .switch .note { margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .threads { flex: 1; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
+    .threads .empty { color: var(--muted); font-size: 13px; }
+    .thread { border: 1px solid var(--line); border-radius: 8px; }
+    .thread summary { padding: 6px 10px; cursor: pointer; font-size: 13px; font-weight: 600; }
+    .thread summary small { font-weight: 400; color: var(--muted); }
+    .thread .entries { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 6px; }
+    .msg.student { background: var(--me); color: var(--me-fg); align-self: flex-end; white-space: pre-wrap; }
+    .msg.tutor { background: var(--ai); align-self: flex-start; }
+    .msg .meta { display: block; font-size: 11px; opacity: .75; margin-bottom: 2px; white-space: normal; }
+    .msg.failed { align-self: stretch; font-size: 12px; border: 1px solid #e0452b; background: rgba(224,69,43,.1); }
     header select {
       flex: 1; min-width: 0; font-size: 13px; padding: 3px 4px; border-radius: 6px;
       border: 1px solid var(--line); background: var(--bg); color: var(--fg);
@@ -101,25 +131,38 @@
   root.innerHTML = `
     <style>${css}</style>
     <div class="wrap">
-      <button class="toggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Agent chat">
+      <button class="toggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="edrys-dev">
         🤖<span class="dot"></span>
       </button>
-      <section class="panel" id="panel" aria-label="Agent chat">
+      <section class="panel" id="panel" aria-label="edrys-dev">
         <header>
-          Agent
+          <div class="tabs" role="tablist">
+            <button type="button" role="tab" data-view="agent" aria-controls="agent">Agent</button>
+            <button type="button" role="tab" data-view="students" aria-controls="students">Students<span class="count"></span></button>
+          </div>
           <label for="sessions" hidden>Chats</label>
           <select id="sessions"></select>
+          <span class="spacer"></span>
           <small title="edrys-dev: not the class's chat">only you see this</small>
         </header>
-        <div class="log" role="log" aria-live="polite"></div>
-        <div class="problem" role="alert" hidden></div>
-        <div class="status" aria-live="polite"></div>
-        <div class="hint" aria-live="polite"></div>
-        <form class="compose">
-          <label for="text" hidden>Message to the agent</label>
-          <textarea id="text" placeholder="Message to the agent (Enter sends)"></textarea>
-          <button type="submit">Send</button>
-        </form>
+        <div class="view" id="agent" role="tabpanel">
+          <div class="log" role="log" aria-live="polite"></div>
+          <div class="problem" role="alert" hidden></div>
+          <div class="status" aria-live="polite"></div>
+          <div class="hint" aria-live="polite"></div>
+          <form class="compose">
+            <label for="text" hidden>Message to the agent</label>
+            <textarea id="text" placeholder="Message to the agent (Enter sends)"></textarea>
+            <button type="submit">Send</button>
+          </form>
+        </div>
+        <div class="view" id="students" role="tabpanel" hidden>
+          <div class="switch">
+            <label><input type="checkbox" id="tutor-on"> Tutor answers students</label>
+            <div class="note" aria-live="polite"></div>
+          </div>
+          <div class="threads" role="log" aria-live="polite"></div>
+        </div>
       </section>
     </div>`
   document.documentElement.appendChild(host)
@@ -133,6 +176,41 @@
   const compose = root.querySelector('.compose')
   const textarea = root.querySelector('textarea')
   const menu = root.querySelector('#sessions')
+  const tabs = [...root.querySelectorAll('.tabs button')]
+  const count = root.querySelector('.tabs .count')
+  const tutorBox = root.querySelector('#tutor-on')
+  const tutorNote = root.querySelector('.switch .note')
+  const threadList = root.querySelector('.threads')
+
+  // the views there are; the tabs only when there are two
+  let view = null
+  function showView(name) {
+    view = name
+    for (const tab of tabs) tab.setAttribute('aria-selected', String(tab.dataset.view === name))
+    root.querySelector('#agent').hidden = name !== 'agent'
+    root.querySelector('#students').hidden = name !== 'students'
+    menu.hidden = name !== 'agent'
+    // the menu fills the header; without it, the note goes right
+    root.querySelector('.spacer').hidden = name === 'agent'
+    if (name === 'students') count.textContent = ''
+    try {
+      sessionStorage.setItem(VIEW_KEY, name)
+    } catch {}
+  }
+  for (const tab of tabs) {
+    tab.hidden = !(hasChat && hasTutor) || (tab.dataset.view === 'agent' ? !hasChat : !hasTutor)
+    tab.addEventListener('click', () => showView(tab.dataset.view))
+  }
+  if (!(hasChat && hasTutor)) {
+    // one view: its name as the title
+    const title = root.querySelector('.tabs')
+    title.textContent = hasChat ? 'Agent' : 'Students'
+  }
+  let savedView = null
+  try {
+    savedView = sessionStorage.getItem(VIEW_KEY)
+  } catch {}
+  showView(!hasChat ? 'students' : !hasTutor ? 'agent' : savedView === 'students' ? 'students' : 'agent')
 
   let open = null // the ask id of the form the user can still answer
   let current = null // the chat shown, {id, title}
@@ -167,6 +245,7 @@
     panel.classList.toggle('open', isOpen)
     toggle.setAttribute('aria-expanded', String(isOpen))
     if (isOpen) toggle.classList.remove('unread')
+    if (isOpen && view === 'students') count.textContent = ''
     try {
       sessionStorage.setItem(OPEN_KEY, isOpen ? '1' : '')
     } catch {}
@@ -376,12 +455,141 @@
     }
   }
 
+  // --- the students' tutor threads ---
+
+  const threads = new Map() // thread id → {box, entries, when}
+  const time = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+  function emptyNote() {
+    if (threads.size) return threadList.querySelector('.empty')?.remove()
+    const note = document.createElement('div')
+    note.className = 'empty'
+    note.textContent = 'No questions yet. Students ask with the 🤖 button in the class.'
+    threadList.replaceChildren(note)
+  }
+
+  // the thread's box, moved to the top: the one changed last first
+  function threadFor(id, name) {
+    let thread = threads.get(id)
+    if (!thread) {
+      const box = document.createElement('details')
+      box.className = 'thread'
+      box.open = true
+      const summary = document.createElement('summary')
+      const entries = document.createElement('div')
+      entries.className = 'entries'
+      box.append(summary, entries)
+      thread = { box, summary, entries }
+      threads.set(id, thread)
+      emptyNote()
+    }
+    // the name is the student's choice: text only
+    const when = document.createElement('small')
+    when.textContent = thread.last ? ' · ' + time(thread.last) : ''
+    thread.summary.replaceChildren(name, when)
+    threadList.prepend(thread.box)
+    return thread
+  }
+
+  function showTutorEntry(thread, entry) {
+    const div = document.createElement('div')
+    const meta = document.createElement('span')
+    meta.className = 'meta'
+    meta.textContent = time(entry.t) + (entry.room ? ' · ' + entry.room : '')
+    if (entry.from === 'student') {
+      div.className = 'msg student'
+      div.append(meta, entry.text)
+    } else {
+      div.className = 'msg tutor'
+      div.append(meta, render(entry.text))
+    }
+    thread.entries.appendChild(div)
+    thread.last = entry.t
+  }
+
+  function addTutorEntry(id, name, entry) {
+    const thread = threadFor(id, name)
+    showTutorEntry(thread, entry)
+    threadFor(id, name)
+    threadList.scrollTop = 0
+    if (entry.from !== 'student') return
+    if (view !== 'students' || !panel.classList.contains('open')) {
+      count.textContent = String(Number(count.textContent || 0) + 1)
+      if (!panel.classList.contains('open')) toggle.classList.add('unread')
+    }
+  }
+
+  function showSwitch(on) {
+    tutorBox.checked = on
+    tutorNote.textContent = on
+      ? 'Students see the 🤖 button while this tab is open.'
+      : 'Off: students do not see the button, and questions get "The tutor is off".'
+  }
+
+  tutorBox.addEventListener('change', async () => {
+    const on = tutorBox.checked
+    const response = await fetch('/edrys-dev/tutor', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ on }),
+    }).catch(() => null)
+    if (response?.ok) return
+    showSwitch(!on)
+    tutorNote.textContent = 'Not switched: is edrys-dev still running? Try again.'
+  })
+
+  function connectTutor() {
+    const events = new EventSource('/edrys-dev/tutor/events')
+    events.onmessage = (event) => {
+      const message = JSON.parse(event.data)
+      switch (message.type) {
+        case 'threads':
+          threads.clear()
+          threadList.replaceChildren()
+          showSwitch(message.on)
+          // oldest first, so the newest ends up on top
+          for (const saved of [...message.threads].reverse()) {
+            const thread = threadFor(saved.id, saved.name)
+            if (saved.skipped) {
+              const note = document.createElement('div')
+              note.className = 'skipped'
+              note.textContent = `${saved.skipped} earlier messages not shown`
+              thread.entries.appendChild(note)
+            }
+            saved.entries.forEach((entry) => showTutorEntry(thread, entry))
+            threadFor(saved.id, saved.name)
+          }
+          emptyNote()
+          break
+        case 'entry':
+          addTutorEntry(message.id, message.name, message.entry)
+          break
+        case 'failed': {
+          // the reason is for the teacher; the student was told it failed
+          const thread = threadFor(message.id, message.name)
+          const div = document.createElement('div')
+          div.className = 'msg failed'
+          div.textContent = 'No answer: ' + message.error
+          thread.entries.appendChild(div)
+          break
+        }
+        case 'on':
+          showSwitch(message.on)
+          break
+      }
+    }
+  }
+
   // the renderer first, then the messages that need it
   let loaded = 0
   for (const name of ['marked', 'purify']) {
     const script = document.createElement('script')
     script.src = `/edrys-dev/${name}.js`
-    script.onload = () => ++loaded === 2 && connect()
+    script.onload = () => {
+      if (++loaded < 2) return
+      if (hasChat) connect()
+      if (hasTutor) connectTutor()
+    }
     document.head.appendChild(script)
   }
 })()

@@ -230,6 +230,70 @@ test('the class tab passes questions on and gets the answer by event', async () 
   }
 })
 
+// the events of a stream, as {event, data}, one at a time
+function eventsOf(response) {
+  const reader = response.body.getReader()
+  let text = ''
+  return async function next() {
+    let end
+    while ((end = text.indexOf('\n\n')) < 0) text += new TextDecoder().decode((await reader.read()).value)
+    const block = text.slice(0, end)
+    text = text.slice(end + 2)
+    const data = block.match(/^data: (.+)$/m)?.[1]
+    if (!data) return next()
+    return { event: block.match(/^event: (.+)$/m)?.[1] ?? 'message', data: JSON.parse(data) }
+  }
+}
+
+test('the chat panel shows the threads live and switches the tutor off and on', async () => {
+  fs.rmSync(calls, { force: true })
+  const own = fs.mkdtempSync(path.join(dir, 'panel-'))
+  fs.copyFileSync(lab, path.join(own, 'lab.yml'))
+  const server = await startDevServer({ lab: path.join(own, 'lab.yml'), port: 3335, host: '127.0.0.1', tutor: { command: fake } })
+  const origin = `http://localhost:${server.port}`
+  const controller = new AbortController()
+  try {
+    assert.match(await (await fetch(origin + '/')).text(), /<script src="\/edrys-dev\/panel\.js" defer data-tutor><\/script>$/)
+    const panel = eventsOf(await fetch(origin + '/edrys-dev/tutor/events', { signal: controller.signal }))
+    const tab = eventsOf(await fetch(origin + '/edrys-dev/events', { signal: controller.signal }))
+    assert.deepEqual(await panel(), { event: 'message', data: { type: 'threads', on: true, threads: [] } })
+
+    const post = (path, body, headers = { Origin: origin }) =>
+      fetch(origin + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+    // only the class tab's own page may switch it
+    assert.equal((await post('/edrys-dev/tutor', { on: false }, { Origin: 'https://evil.example' })).status, 403)
+    assert.equal((await post('/edrys-dev/tutor', { on: 'no' })).status, 400)
+
+    assert.equal(await server.tutor.ask({ student: 'key-a', name: 'Ada', room: 'Lobby', text: 'hi' }), 'Answer to: hi')
+    const id = (await panel()).data.id
+    assert.match(id, /^[0-9a-f]{16}$/)
+    const answer = await panel()
+    assert.deepEqual([answer.data.type, answer.data.name, answer.data.entry.from, answer.data.entry.text], ['entry', 'Ada', 'tutor', 'Answer to: hi'])
+
+    assert.equal((await post('/edrys-dev/tutor', { on: false })).status, 204)
+    assert.deepEqual((await panel()).data, { type: 'on', on: false })
+    // the class tab reads the lab again, which no longer offers the tutor
+    let event
+    // after the question's read-state, which nobody answers here
+    while ((event = (await tab()).event) !== 'reload-lab') assert.equal(event, 'read-state')
+    assert.equal((await (await fetch(origin + '/edrys-dev/lab')).json()).tutor, false)
+    await assert.rejects(server.tutor.ask({ student: 'key-b', name: 'Bob', room: 'Lobby', text: 'hi' }), /tutor is off/)
+
+    assert.equal((await post('/edrys-dev/tutor', { on: true })).status, 204)
+    assert.deepEqual((await panel()).data, { type: 'on', on: true })
+    assert.equal((await (await fetch(origin + '/edrys-dev/lab')).json()).tutor, true)
+
+    // a reload of the panel gets the thread back, without the student's key
+    const again = eventsOf(await fetch(origin + '/edrys-dev/tutor/events', { signal: controller.signal }))
+    const { data } = await again()
+    assert.deepEqual(data.threads.map((t) => [t.id, t.name, t.skipped, t.entries.length]), [[id, 'Ada', 0, 2]])
+    assert.ok(!JSON.stringify(data).includes('key-a'))
+  } finally {
+    controller.abort()
+    await server.close()
+  }
+})
+
 test('read_student_chats returns the saved threads, newest first, filtered by name', { timeout: 10000 }, async () => {
   const { spawn } = await import('node:child_process')
   const readline = await import('node:readline')

@@ -487,9 +487,10 @@ export function panelFiles(app: express.Express) {
 
 /**
  * The script tag that brings panel.js into the edrys-Lite page: it reloads
- * student and station tabs when a local module changed, and with `chat` (an
- * agent is connected) shows the chat in the class tab.
+ * student and station tabs when a local module changed, and in the class tab
+ * shows the chat with `chat` (an agent is connected) and the students' tutor
+ * threads with `tutor`.
  */
-export function panelScript(chat: boolean): string {
-  return `<script src="/edrys-dev/panel.js" defer${chat ? ' data-chat' : ''}></script>`
+export function panelScript(chat: boolean, tutor = false): string {
+  return `<script src="/edrys-dev/panel.js" defer${chat ? ' data-chat' : ''}${tutor ? ' data-tutor' : ''}></script>`
 }
