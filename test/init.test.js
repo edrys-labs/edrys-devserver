@@ -12,8 +12,8 @@ after(() => fs.rmSync(dir, { recursive: true }))
 const home = path.join(dir, 'home')
 
 // no TTY on stdin, so no questions: the lab is named after its folder, the skills are left to the user
-const init = (folder) =>
-  execFileSync(process.execPath, ['dist/index.js', 'init', folder], {
+const init = (folder, ...options) =>
+  execFileSync(process.execPath, ['dist/index.js', 'init', folder, ...options], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, HOME: home, USERPROFILE: home },
   }).toString()
@@ -38,6 +38,20 @@ test('init sets up a new folder for an agent', () => {
   assert.equal(read('.gitignore'), '.edrys-dev/\n')
   assert.match(out, /created {2}lab\.yml/)
   assert.match(out, /To install them later: npx skills add edrys-labs\/skills/)
+})
+
+test('init --tutor lets the agent start edrys-dev with the tutor', () => {
+  const lab = path.join(dir, 'tutored')
+  const out = init(lab, '--tutor', '--tutor-agent', 'codex')
+  const args = ['-y', '@edryslabs/edrys-dev', '--mcp', 'lab.yml', '--tutor', '--tutor-agent', 'codex']
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(lab, '.mcp.json'), 'utf8')).mcpServers.edrys.args, args)
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(lab, '.vscode/mcp.json'), 'utf8')).servers.edrys.args, args)
+  assert.match(out, /tutor chat/)
+
+  // a config from before is kept, with a hint
+  const before = path.join(dir, 'untutored')
+  init(before)
+  assert.match(init(before, '--tutor'), /kept {5}\.mcp\.json \(already there\): add "--tutor" to the args/)
 })
 
 test('init leaves out the skills hint once they are installed', () => {

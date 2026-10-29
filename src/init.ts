@@ -6,7 +6,8 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline/promises'
 
-const SERVER = { command: 'npx', args: ['-y', '@edryslabs/edrys-dev', '--mcp', 'lab.yml'] }
+// `extra`: more options for edrys-dev, e.g. --tutor
+const server = (extra: string[]) => ({ command: 'npx', args: ['-y', '@edryslabs/edrys-dev', '--mcp', 'lab.yml', ...extra] })
 
 const SETTINGS = {
   enabledMcpjsonServers: ['edrys'],
@@ -43,10 +44,10 @@ The user may not be a programmer. Answer in plain words, show no YAML or code in
 If the edrys-lab and edrys-module skills are installed, use them to write the lab and its modules.
 `
 
-const FILES: [string, (name: string) => string][] = [
+const FILES: [string, (name: string, extra: string[]) => string][] = [
   ['lab.yml', starterLab],
-  ['.mcp.json', () => JSON.stringify({ mcpServers: { edrys: SERVER } }, null, 2) + '\n'],
-  ['.vscode/mcp.json', () => JSON.stringify({ servers: { edrys: { type: 'stdio', ...SERVER } } }, null, 2) + '\n'],
+  ['.mcp.json', (_, extra) => JSON.stringify({ mcpServers: { edrys: server(extra) } }, null, 2) + '\n'],
+  ['.vscode/mcp.json', (_, extra) => JSON.stringify({ servers: { edrys: { type: 'stdio', ...server(extra) } } }, null, 2) + '\n'],
   ['AGENTS.md', agents],
   // Claude Code reads CLAUDE.md, which imports AGENTS.md
   ['CLAUDE.md', () => '@AGENTS.md\n'],
@@ -73,7 +74,8 @@ async function ask(question: string) {
   return answer
 }
 
-export async function init(folder: string, say: (line: string) => void = console.log) {
+/** `extra`: options the agent starts edrys-dev with, e.g. ['--tutor']. */
+export async function init(folder: string, extra: string[] = [], say: (line: string) => void = console.log) {
   const dir = path.resolve(folder)
   fs.mkdirSync(dir, { recursive: true })
 
@@ -85,11 +87,12 @@ export async function init(folder: string, say: (line: string) => void = console
   for (const [file, content] of FILES) {
     const target = path.join(dir, file)
     if (fs.existsSync(target)) {
-      say(`  kept     ${file} (already there)`)
+      const missing = file.endsWith('mcp.json') && extra.length && !fs.readFileSync(target, 'utf8').includes(extra[0])
+      say(`  kept     ${file} (already there)` + (missing ? `: add ${extra.map((a) => `"${a}"`).join(', ')} to the args of edrys yourself` : ''))
       continue
     }
     fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, content(name))
+    fs.writeFileSync(target, content(name, extra))
     say(`  created  ${file}`)
   }
 
@@ -119,4 +122,9 @@ Your lab is ready in ${dir}
 Next: open this folder in your AI agent (Claude Code, or VS Code with Copilot)
 and write "start". The agent starts edrys-dev and opens the class in your
 browser; from then on you can talk to it in the 🤖 chat there.`)
+  if (extra.includes('--tutor')) {
+    say(`
+Your students get a tutor chat in the class, answered by the AI on this
+computer. Notes only for the tutor go into tutor.md in this folder.`)
+  }
 }

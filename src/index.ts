@@ -13,7 +13,8 @@ const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
 Usage: edrys-dev [lab.yml] [options]
        edrys-dev init [folder]   set up a new lab for an AI agent: lab.yml,
-                                 agent config and instructions
+                                 agent config and instructions; with
+                                 --tutor, the agent starts it with the tutor
 
   -i, --input <file>  lab file (YAML or JSON), default ./lab.yml
   -p, --port <port>   port, default 3210 (the next free one if taken)
@@ -72,9 +73,19 @@ if (values.help) {
   process.exit(0)
 }
 
+const tutorAgent = values['tutor-agent'] as TutorAgent
+if (!TUTOR_AGENTS.includes(tutorAgent)) {
+  console.error(`edrys-dev: --tutor-agent must be ${TUTOR_AGENTS.join(' or ')}, not ${tutorAgent}`)
+  process.exit(1)
+}
+
 if (positionals[0] === 'init' && !values.input) {
   const { init } = await import('./init.js')
-  await init(positionals[1] ?? '.')
+  // the agent starts edrys-dev with the tutor options given here
+  const tutor = values.tutor
+    ? ['--tutor', ...(tutorAgent !== 'claude' ? ['--tutor-agent', tutorAgent] : []), ...(values['tutor-model'] ? ['--tutor-model', values['tutor-model']] : [])]
+    : []
+  await init(positionals[1] ?? '.', tutor)
   process.exit(0)
 }
 
@@ -93,12 +104,6 @@ if (!fs.existsSync(lab)) {
 const studentSite = values['student-url']
 if (!URL.canParse(studentSite) || !/^https?:$/.test(new URL(studentSite).protocol)) {
   console.error(`edrys-dev: --student-url must be an http(s) address, not ${studentSite}`)
-  process.exit(1)
-}
-
-const tutorAgent = values['tutor-agent'] as TutorAgent
-if (!TUTOR_AGENTS.includes(tutorAgent)) {
-  console.error(`edrys-dev: --tutor-agent must be ${TUTOR_AGENTS.join(' or ')}, not ${tutorAgent}`)
   process.exit(1)
 }
 
