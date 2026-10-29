@@ -34,7 +34,13 @@ export type TutorOptions = {
   concurrency?: number
   /** Questions per student per hour. */
   perHour?: number
+  /** Questions of the whole class per hour: new identities don't get past it. */
+  classPerHour?: number
   timeoutMs?: number
+  /** How long a question may wait for a free run. */
+  queueMs?: number
+  /** How long a question waits for the room state. */
+  stateMs?: number
   /** The state the modules of a room share, read when a question's turn comes; may reject. */
   roomState?: (room: string) => Promise<Record<string, any>>
 }
@@ -50,6 +56,11 @@ const QUEUE_MAX = 30
 const HOUR = 3_600_000
 // characters of room state per question, as JSON
 export const STATE_MAX = 20000
+// the student's tab gives up after 3 minutes: waiting for a run, reading the
+// room state and the run itself stay below that
+const QUEUE_MS = 30_000
+export const STATE_MS = 10_000
+export const CLASS_PER_HOUR = 200
 
 // codex has no list of allowed tools: everything that adds one is switched off
 // (checked with codex 0.165.0; a feature it no longer knows makes it fail)
@@ -102,8 +113,9 @@ function fileOf(student: string) {
  * student and `perHour` an hour.
  *
  * Emits `entry` ({student, name, entry}) for every question and answer,
- * `failed` ({student, name, error}) when the agent could not answer, and
- * `switch` (on) when the teacher turned it on or off.
+ * `failed` ({student, name, error}) when the agent could not answer,
+ * `switch` (on) when the teacher turned it on or off, and `limit` (perHour)
+ * when the class reached its questions per hour.
  */
 export class Tutor extends EventEmitter {
   private dir: string
@@ -113,6 +125,9 @@ export class Tutor extends EventEmitter {
   private queue: (() => void)[] = []
   private busy = new Set<string>()
   private asked = new Map<string, number[]>()
+  private classAsked: number[] = []
+  // the class limit was reached; told once until questions pass again
+  private limited = false
   private threads = new Map<string, Thread>()
   // the room state each session got last; a restart sends it again
   private sent = new Map<string, string>()
@@ -180,8 +195,17 @@ export class Tutor extends EventEmitter {
     if (recent.length >= (this.options.perHour ?? 20)) {
       throw new Error('You asked a lot this hour. Ask your teacher, or try again later.')
     }
+    this.classAsked = this.classAsked.filter((t) => t > now - HOUR)
+    const classPerHour = this.options.classPerHour ?? CLASS_PER_HOUR
+    if (this.classAsked.length >= classPerHour) {
+      if (!this.limited) this.emit('limit', classPerHour)
+      this.limited = true
+      throw new Error('The tutor has answered a lot this hour. Ask your teacher.')
+    }
     if (this.queue.length >= QUEUE_MAX) throw new Error('The tutor is busy. Try again in a minute.')
+    this.limited = false
     this.asked.set(question.student, [...recent, now])
+    this.classAsked.push(now)
 
     this.busy.add(question.student)
     try {
@@ -193,7 +217,15 @@ export class Tutor extends EventEmitter {
       }
       thread.name = question.name
       this.add(thread, { t: now, from: 'student', text, room: question.room })
-      await this.turn()
+      try {
+        await this.turn()
+      } catch (error: any) {
+        // it never ran: no use of the account to count
+        this.classAsked.splice(this.classAsked.indexOf(now), 1)
+        this.asked.get(question.student)?.pop()
+        this.emit('failed', { student: question.student, name: question.name, error: error.message })
+        throw new Error('The tutor is busy. Try again in a minute.')
+      }
       try {
         const head = `[student: ${oneLine(question.name)}, room: ${oneLine(question.room)}]\n${text}`
         const answer = await this.run(thread, head, await this.readState(question.room))
@@ -223,18 +255,25 @@ export class Tutor extends EventEmitter {
     for (const child of this.children) kill(child)
   }
 
-  // waits for a free run
+  // waits for a free run, at most queueMs
   private turn(): Promise<void> {
     if (this.running < (this.options.concurrency ?? 2)) {
       this.running++
       return Promise.resolve()
     }
-    return new Promise((resolve) =>
-      this.queue.push(() => {
+    const ms = this.options.queueMs ?? QUEUE_MS
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        clearTimeout(timer)
         this.running++
         resolve()
-      })
-    )
+      }
+      const timer = setTimeout(() => {
+        this.queue.splice(this.queue.indexOf(start), 1)
+        reject(new Error(`no free run within ${ms / 1000} s: more questions than answers at once`))
+      }, ms)
+      this.queue.push(start)
+    })
   }
 
   private add(thread: Thread, entry: TutorEntry) {
@@ -274,14 +313,19 @@ export class Tutor extends EventEmitter {
     }
   }
 
-  // the room's state as JSON, null when the class tab could not tell, undefined without a class tab
+  // the room's state as JSON, null when the class tab could not tell within
+  // STATE_MS, undefined without a class tab
   private async readState(room: string): Promise<string | null | undefined> {
     if (!this.options.roomState) return undefined
     if (!room) return null
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('late')), this.options.stateMs ?? STATE_MS)))
     try {
-      return stateText(await this.options.roomState(room))
+      return stateText(await Promise.race([this.options.roomState(room), late]))
     } catch {
       return null
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -307,6 +351,8 @@ export class Tutor extends EventEmitter {
         this.save(thread)
         throw error
       }
+      // no time left for a second run: the student gives up after 3 minutes
+      if (error.late) throw error
       // the agent's own session store may have lost it: start a new one
       return once()
     }
@@ -429,8 +475,11 @@ export class Tutor extends EventEmitter {
       child.on('close', (code) => {
         clearTimeout(timer)
         this.children.delete(child)
-        if (this.stopped) return reject(new Error('edrys-dev stopped'))
-        if (timedOut) return reject(new Error(`${command} gave no answer within ${(this.options.timeoutMs ?? 120_000) / 1000} s`))
+        if (this.stopped) return reject(Object.assign(new Error('edrys-dev stopped'), { late: true }))
+        if (timedOut) {
+          const s = (this.options.timeoutMs ?? 120_000) / 1000
+          return reject(Object.assign(new Error(`${command} gave no answer within ${s} s`), { late: true }))
+        }
         resolve({ code, out, err })
       })
       child.stdin.on('error', () => {})

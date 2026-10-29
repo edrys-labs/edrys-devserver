@@ -10,7 +10,7 @@ import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, explain, panelFiles, panelScript } from './chat.js'
-import { Tutor, threadId, type TutorOptions } from './tutor.js'
+import { STATE_MS, Tutor, threadId, type TutorOptions } from './tutor.js'
 import { localUrls, studentLink } from './mcp.js'
 
 export type Report = { type: string; [key: string]: any }
@@ -71,7 +71,7 @@ export type DevServerOptions = {
    */
   studentSite?: string | null
   /** Students ask a tutor through the class tab (--tutor). */
-  tutor?: Pick<TutorOptions, 'agent' | 'model' | 'command' | 'concurrency' | 'perHour' | 'timeoutMs'>
+  tutor?: Pick<TutorOptions, 'agent' | 'model' | 'command' | 'concurrency' | 'perHour' | 'classPerHour' | 'timeoutMs' | 'queueMs'>
 }
 
 export type DevServer = {
@@ -255,11 +255,17 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
 
   const folder = path.join(path.dirname(options.lab), '.edrys-dev')
   // a room's state from the class tab, with the strings it cut read in full
+  // while there is time; the tutor waits STATE_MS for all of it
   const roomState = async (room: string) => {
+    const until = Date.now() + STATE_MS - 1000
     const { state } = await request('read-state', { room }, 3000)
     const full = { ...state }
     const cut = Object.keys(state).filter((key) => /…\(\d+\)/.test(JSON.stringify(state[key])))
-    for (const key of cut.slice(0, 10)) full[key] = (await request('read-state', { room, key }, 3000)).value
+    for (const key of cut.slice(0, 10)) {
+      const left = until - Date.now()
+      if (left <= 0) break
+      full[key] = (await request('read-state', { room, key }, Math.min(3000, left))).value
+    }
     return full
   }
   const tutor = options.tutor ? new Tutor({ ...options.tutor, folder, lab: options.lab, roomState }) : null
@@ -294,6 +300,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     })
     tutor.on('entry', ({ student, name, entry }) => tell({ type: 'entry', id: threadId(student), name, entry }))
     tutor.on('failed', ({ student, name, error }) => tell({ type: 'failed', id: threadId(student), name, error }))
+    tutor.on('limit', (perHour) => tell({ type: 'limit', perHour }))
     tutor.on('switch', (on) => {
       tell({ type: 'on', on })
       // the class tab reads the lab again, and with it whether to offer the tutor

@@ -7,7 +7,7 @@ import { startDevServer, type Report } from './server.js'
 import { startMcp, studentLink, localUrls } from './mcp.js'
 import { reachable } from './origin.js'
 import { readSaved } from './watch.js'
-import { TUTOR_AGENTS, type TutorAgent } from './tutor.js'
+import { CLASS_PER_HOUR, TUTOR_AGENTS, type TutorAgent } from './tutor.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -38,6 +38,9 @@ Usage: edrys-dev [lab.yml] [options]
                       the default) or Codex (codex exec)
       --tutor-model <model>
                       the model the tutor uses, default the agent's own
+      --tutor-per-hour <n>
+                      questions the tutor answers per hour for the whole
+                      class, default 200 (each student: 20)
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
@@ -59,6 +62,7 @@ const { values, positionals } = parseArgs({
     tutor: { type: 'boolean', default: false },
     'tutor-agent': { type: 'string', default: 'claude' },
     'tutor-model': { type: 'string' },
+    'tutor-per-hour': { type: 'string', default: String(CLASS_PER_HOUR) },
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -78,12 +82,22 @@ if (!TUTOR_AGENTS.includes(tutorAgent)) {
   console.error(`edrys-dev: --tutor-agent must be ${TUTOR_AGENTS.join(' or ')}, not ${tutorAgent}`)
   process.exit(1)
 }
+const classPerHour = Number(values['tutor-per-hour'])
+if (!Number.isInteger(classPerHour) || classPerHour < 1) {
+  console.error(`edrys-dev: --tutor-per-hour must be a whole number of at least 1, not ${values['tutor-per-hour']}`)
+  process.exit(1)
+}
 
 if (positionals[0] === 'init' && !values.input) {
   const { init } = await import('./init.js')
   // the agent starts edrys-dev with the tutor options given here
   const tutor = values.tutor
-    ? ['--tutor', ...(tutorAgent !== 'claude' ? ['--tutor-agent', tutorAgent] : []), ...(values['tutor-model'] ? ['--tutor-model', values['tutor-model']] : [])]
+    ? [
+        '--tutor',
+        ...(tutorAgent !== 'claude' ? ['--tutor-agent', tutorAgent] : []),
+        ...(values['tutor-model'] ? ['--tutor-model', values['tutor-model']] : []),
+        ...(classPerHour !== CLASS_PER_HOUR ? ['--tutor-per-hour', String(classPerHour)] : []),
+      ]
     : []
   await init(positionals[1] ?? '.', tutor)
   process.exit(0)
@@ -122,9 +136,12 @@ const server = await startDevServer({
   modules,
   agent: values.mcp,
   studentSite: values.local ? null : studentSite,
-  tutor: values.tutor ? { agent: tutorAgent, model: values['tutor-model'] } : undefined,
+  tutor: values.tutor ? { agent: tutorAgent, model: values['tutor-model'], classPerHour } : undefined,
 })
 server.tutor?.on('failed', ({ name, error }) => console.error(`tutor: no answer for ${name}: ${error}`))
+server.tutor?.on('limit', (perHour) =>
+  console.error(`tutor: the class reached its limit of ${perHour} questions this hour, more get no answer (--tutor-per-hour)`)
+)
 server.tutor?.on('switch', (on) => say(`tutor: ${on ? 'on' : 'off'} (switched in the chat panel)`))
 
 // Ctrl+C, or a process manager or agent client stopping it; the chat is saved

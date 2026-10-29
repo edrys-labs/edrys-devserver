@@ -599,6 +599,10 @@
         case 'on':
           showSwitch(message.on)
           break
+        case 'limit':
+          tutorNote.textContent = `The class reached its limit of ${message.perHour} questions this hour: more get no answer for now. Start edrys-dev with --tutor-per-hour to change it.`
+          if (!panel.classList.contains('open')) toggle.classList.add('unread')
+          break
       }
     }
   }

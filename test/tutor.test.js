@@ -107,6 +107,51 @@ test('one open question per student, a limit per hour, and at most `concurrency`
   await assert.rejects(ask(t, 'key-b', 'x'.repeat(2001)), /too long/)
 })
 
+test('the whole class has a limit per hour, also with new identities; the teacher is told once', async () => {
+  const t = tutor({ classPerHour: 2 })
+  const limits = []
+  t.on('limit', (perHour) => limits.push(perHour))
+  await ask(t, 'key-a', 'one')
+  await ask(t, 'key-b', 'two')
+  await assert.rejects(ask(t, 'key-c', 'three'), /answered a lot this hour/)
+  await assert.rejects(ask(t, 'key-d', 'four'), /answered a lot this hour/)
+  assert.deepEqual(limits, [2])
+
+  // a question turned away as busy never ran: it does not count
+  const busy = tutor({ classPerHour: 2, concurrency: 1, queueMs: 100 })
+  const first = ask(busy, 'key-a', 'SLOW')
+  await assert.rejects(ask(busy, 'key-b', 'waiting'), /busy/)
+  await first
+  assert.equal(await ask(busy, 'key-b', 'again'), 'Answer to: again')
+  await assert.rejects(ask(busy, 'key-c', 'three'), /answered a lot this hour/)
+})
+
+test('an answer comes before the student\'s tab gives up, or a reason', { timeout: 5000 }, async () => {
+  // no free run within queueMs: busy, at once
+  const queued = tutor({ concurrency: 1, queueMs: 200 })
+  const failed = []
+  queued.on('failed', (f) => failed.push(f))
+  const first = ask(queued, 'key-a', 'SLOW')
+  await assert.rejects(ask(queued, 'key-b', 'waiting'), /busy/)
+  assert.match(failed[0].error, /no free run within 0.2 s/)
+  await first
+  assert.equal(await ask(queued, 'key-b', 'now'), 'Answer to: now')
+
+  // a resume that ran out of time is not run again in a new session
+  const slow = tutor({ timeoutMs: 300 })
+  await ask(slow, 'key-a', 'first')
+  const session = slow.thread('key-a').session
+  const started = Date.now()
+  await assert.rejects(ask(slow, 'key-a', 'HANG'), /could not answer/)
+  assert.ok(Date.now() - started < 550, 'ran twice')
+  assert.equal(slow.thread('key-a').session, session)
+
+  // a room state that does not come in time is left out
+  const stuck = tutor({ stateMs: 100, roomState: () => new Promise(() => {}) })
+  await ask(stuck, 'key-a', 'hi')
+  assert.match(readCalls()[0].input, /could not be read/)
+})
+
 test('a failed run tells the teacher why, the student only that it failed', async () => {
   const t = tutor()
   const failed = []
