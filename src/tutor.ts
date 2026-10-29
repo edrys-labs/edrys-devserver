@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { readSaved } from './watch.js'
 
@@ -117,6 +117,10 @@ export class Tutor extends EventEmitter {
   // the room state each session got last; a restart sends it again
   private sent = new Map<string, string>()
   private saving = Promise.resolve()
+  // the system prompt as written last: another run may be reading the file
+  private written = ''
+  private children = new Set<ChildProcess>()
+  private stopped = false
   /** Off, it answers no questions, and the class tab no longer offers it. */
   enabled = true
 
@@ -213,6 +217,12 @@ export class Tutor extends EventEmitter {
     return this.saving
   }
 
+  /** Stops the runs in progress, which fail; for a clean stop. */
+  stop() {
+    this.stopped = true
+    for (const child of this.children) kill(child)
+  }
+
   // waits for a free run
   private turn(): Promise<void> {
     if (this.running < (this.options.concurrency ?? 2)) {
@@ -231,10 +241,37 @@ export class Tutor extends EventEmitter {
     thread.entries.push(entry)
     if (thread.entries.length > THREAD_MAX) thread.entries.splice(0, thread.entries.length - THREAD_MAX)
     this.threads.set(thread.student, thread)
+    this.save(thread)
+    this.emit('entry', { student: thread.student, name: thread.name, entry })
+  }
+
+  // a copy renamed over the file: a crash midway leaves the old thread, not half a one
+  private save(thread: Thread) {
     const json = JSON.stringify(thread)
     const file = path.join(this.dir, fileOf(thread.student))
-    this.saving = this.saving.then(() => fsp.writeFile(file, json)).catch(() => {})
-    this.emit('entry', { student: thread.student, name: thread.name, entry })
+    this.saving = this.saving
+      .then(async () => {
+        await fsp.writeFile(file + '.tmp', json)
+        await fsp.rename(file + '.tmp', file)
+      })
+      .catch(() => {})
+  }
+
+  // written anew only when the lab or the notes changed, and renamed into
+  // place: a run that reads it meanwhile gets the old prompt or the new one
+  private async writePrompt(system: string) {
+    const prompt = await tutorPrompt(this.options.lab)
+    if (prompt === this.written) return
+    const tmp = `${system}.${crypto.randomUUID()}.tmp`
+    await fsp.writeFile(tmp, prompt)
+    try {
+      await fsp.rename(tmp, system)
+      this.written = prompt
+    } catch (error) {
+      await fsp.rm(tmp, { force: true })
+      // Windows refuses while a run has it open: that run keeps the old one, the next writes it
+      if (!fs.existsSync(system)) throw error
+    }
   }
 
   // the room's state as JSON, null when the class tab could not tell, undefined without a class tab
@@ -250,7 +287,7 @@ export class Tutor extends EventEmitter {
 
   private async run(thread: Thread, head: string, state: string | null | undefined): Promise<string> {
     const system = path.join(this.dir, 'system.md')
-    await fsp.writeFile(system, await tutorPrompt(this.options.lab))
+    await this.writePrompt(system)
     // without a session, the agent starts one and tells which
     const once = async (session?: string) => {
       const prompt = this.message(session, head, state)
@@ -266,6 +303,8 @@ export class Tutor extends EventEmitter {
       // what a tool brought into the session must not come up in a later answer
       if (error.tool) {
         thread.session = ''
+        // saved now: a restart before the next answer must not resume it either
+        this.save(thread)
         throw error
       }
       // the agent's own session store may have lost it: start a new one
@@ -348,6 +387,7 @@ export class Tutor extends EventEmitter {
   ): Promise<{ code: number | null; out: string; err: string }> {
     const command = this.options.command ?? this.options.agent ?? 'claude'
     return new Promise((resolve, reject) => {
+      if (this.stopped) return reject(new Error('edrys-dev is stopping'))
       // Windows starts claude.cmd through a shell, which drops empty arguments
       const quoted = process.platform === 'win32' ? args.map((a) => (a === '' || /\s/.test(a) ? `"${a}"` : a)) : args
       const child = spawn(command, quoted, {
@@ -355,11 +395,12 @@ export class Tutor extends EventEmitter {
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32',
       })
+      this.children.add(child)
       let out = ''
       let err = ''
       let line = ''
       let timedOut = false
-      const stop = () => child.kill()
+      const stop = () => kill(child)
       child.stdout.on('data', (d) => {
         out += d
         if (!onEvent) return
@@ -382,10 +423,13 @@ export class Tutor extends EventEmitter {
       }, this.options.timeoutMs ?? 120_000)
       child.on('error', (error) => {
         clearTimeout(timer)
+        this.children.delete(child)
         reject(new Error(`the tutor could not start ${command}: ${error.message}`))
       })
       child.on('close', (code) => {
         clearTimeout(timer)
+        this.children.delete(child)
+        if (this.stopped) return reject(new Error('edrys-dev stopped'))
         if (timedOut) return reject(new Error(`${command} gave no answer within ${(this.options.timeoutMs ?? 120_000) / 1000} s`))
         resolve({ code, out, err })
       })
@@ -396,6 +440,13 @@ export class Tutor extends EventEmitter {
 }
 
 type Answer = { answer: string; session: string }
+
+// on Windows the child is the shell that runs claude.cmd: its whole tree goes
+function kill(child: ChildProcess) {
+  if (process.platform === 'win32' && child.pid) {
+    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }).on('error', () => child.kill())
+  } else child.kill()
+}
 
 // a TOML literal string: no escapes, and no " for the shell on Windows
 function tomlString(text: string) {

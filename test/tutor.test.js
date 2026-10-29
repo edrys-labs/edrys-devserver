@@ -30,6 +30,7 @@ const say = (result, code = 0) => {
   process.exit(code)
 }
 if (input.includes('SLOW')) await new Promise((r) => setTimeout(r, 300))
+if (input.includes('HANG')) await new Promise((r) => setTimeout(r, 10000))
 if (input.includes('FAIL')) say('Credit balance is too low', 1)
 if (input.includes('LOST') && args.includes('--resume')) say('No conversation found', 1)
 say('Answer to: ' + input.split('\\n\\n')[0].split('\\n').slice(1).join(' '))
@@ -273,9 +274,47 @@ test('codex: a tool it uses after all stops the run, drops the answer and the th
   assert.equal(readCalls().length, 2)
   assert.ok(!t.thread('key-a').entries.some((e) => e.text === 'LEAKED'))
 
-  // what the tool brought into that session stays there
+  // what the tool brought into that session stays there, also after a restart
+  await t.flush()
+  const saved = fs.readdirSync(path.join(t.options.folder, 'tutor')).find((name) => name.endsWith('.json'))
+  assert.equal(JSON.parse(fs.readFileSync(path.join(t.options.folder, 'tutor', saved), 'utf8')).session, '')
   await ask(t, 'key-a', 'after')
   assert.notEqual(readCalls().at(-1).args[1], 'resume')
+})
+
+test('the system prompt is renamed into place, and only when the lab or the notes changed', async () => {
+  const own = fs.mkdtempSync(path.join(dir, 'lab-'))
+  const ownLab = path.join(own, 'lab.yml')
+  fs.writeFileSync(ownLab, 'name: First\nmodules: []\n')
+  const t = tutor({ lab: ownLab })
+  await ask(t, 'key-a', 'one')
+  const system = arg(readCalls()[0], '--system-prompt-file')
+  const before = fs.statSync(system)
+  await ask(t, 'key-a', 'two')
+  // not written again: a run reading it meanwhile is not cut short
+  assert.equal(fs.statSync(system).mtimeMs, before.mtimeMs)
+
+  fs.writeFileSync(ownLab, 'name: Second\nmodules: []\n')
+  await ask(t, 'key-a', 'three')
+  assert.match(fs.readFileSync(system, 'utf8'), /name: Second/)
+  // a new file renamed over it, not the old one emptied and written
+  assert.notEqual(fs.statSync(system).ino, before.ino)
+  await t.flush()
+  assert.deepEqual(fs.readdirSync(path.dirname(system)).filter((name) => name.endsWith('.tmp')), [])
+})
+
+test('stop ends the runs in progress, and later questions fail', { timeout: 5000 }, async () => {
+  const t = tutor()
+  const failed = []
+  t.on('failed', (f) => failed.push(f))
+  const asking = ask(t, 'key-a', 'HANG')
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const started = Date.now()
+  t.stop()
+  await assert.rejects(asking, /could not answer/)
+  assert.ok(Date.now() - started < 1000)
+  assert.match(failed[0].error, /edrys-dev stopped/)
+  await assert.rejects(ask(t, 'key-b', 'later'), /could not answer/)
 })
 
 test('the class tab passes questions on and gets the answer by event', async () => {

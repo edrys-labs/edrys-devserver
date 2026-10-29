@@ -432,6 +432,7 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       for (const client of [...clients, ...others]) client.end()
       server.closeAllConnections()
       await new Promise((resolve) => server.close(resolve))
+      tutor?.stop()
       await chat.flush()
       await tutor?.flush()
     },
