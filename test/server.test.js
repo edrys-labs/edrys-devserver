@@ -248,12 +248,15 @@ test('the terminal prints the students\' link, and warns about localhost modules
     child.stderr.on('data', (d) => (out += d))
     await new Promise((resolve) => child.stdout.once('data', resolve))
     const origin = out.match(/http:\/\/localhost:\d+/)[0]
-    await fetch(origin + '/edrys-dev/bridge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Origin: origin },
-      body: JSON.stringify({ type: 'open', url: `${origin}/?/classroom/abc/hash#comm=xyz` }),
-    })
-    for (let i = 0; i < 50 && !/students/.test(out); i++) await new Promise((r) => setTimeout(r, 20))
+    // twice, as a reload of the class tab does
+    for (let open = 1; open <= 2; open++) {
+      await fetch(origin + '/edrys-dev/bridge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+        body: JSON.stringify({ type: 'open', url: `${origin}/?/classroom/abc/hash#comm=xyz` }),
+      })
+      for (let i = 0; i < 50 && (out.match(/students/g) ?? []).length < open; i++) await new Promise((r) => setTimeout(r, 20))
+    }
     await new Promise((r) => setTimeout(r, 100))
     child.kill()
     return out
@@ -261,7 +264,8 @@ test('the terminal prints the students\' link, and warns about localhost modules
   try {
     const hosted = await run(['--student-url', 'https://edrys-test.netlify.app/'])
     assert.match(hosted, /students join at:\n {2}https:\/\/edrys-test\.netlify\.app\/\?\/classroom\/abc\/hash#comm=xyz/)
-    assert.match(hosted, /modules from localhost/)
+    // once, not on every reload
+    assert.equal(hosted.match(/modules from localhost/g)?.length, 1)
     const local = await run(['--local'])
     assert.match(local, /--local reaches this machine only/)
     assert.doesNotMatch(local, /students join at/)

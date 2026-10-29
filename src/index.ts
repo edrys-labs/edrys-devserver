@@ -121,7 +121,7 @@ if (!URL.canParse(studentSite) || !/^https?:$/.test(new URL(studentSite).protoco
   process.exit(1)
 }
 
-const nextToLab =path.join(path.dirname(lab), 'modules')
+const nextToLab = path.join(path.dirname(lab), 'modules')
 const modules = values.modules ? path.resolve(values.modules) : fs.existsSync(nextToLab) ? nextToLab : undefined
 if (modules && !fs.statSync(modules, { throwIfNoEntry: false })?.isDirectory()) {
   console.error(`edrys-dev: no modules folder at ${modules}`)
@@ -153,6 +153,8 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   })
 }
 
+// the localhost URLs the terminal warned about last
+let warnedLocal = ''
 server.bus.on('report', async (report: Report) => {
   switch (report.type) {
     case 'open':
@@ -162,8 +164,13 @@ server.bus.on('report', async (report: Report) => {
         break
       }
       say(`students join at:\n  ${studentLink(report.url, studentSite)}`)
-      if (localUrls(await readSaved(lab).catch(() => '')).length) {
-        console.error('edrys-dev: the lab loads modules from localhost, which students cannot load: publish them first')
+      {
+        // once per set of URLs, not on every reload of the class tab
+        const local = localUrls(await readSaved(lab).catch(() => '')).join(' ')
+        if (local && local !== warnedLocal) {
+          console.error('edrys-dev: the lab loads modules from localhost, which students cannot load: publish them first')
+        }
+        warnedLocal = local
       }
       break
     case 'error':
