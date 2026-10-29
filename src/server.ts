@@ -240,7 +240,15 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   })
 
   const folder = path.join(path.dirname(options.lab), '.edrys-dev')
-  const tutor = options.tutor ? new Tutor({ ...options.tutor, folder, lab: options.lab }) : null
+  // a room's state from the class tab, with the strings it cut read in full
+  const roomState = async (room: string) => {
+    const { state } = await request('read-state', { room }, 3000)
+    const full = { ...state }
+    const cut = Object.keys(state).filter((key) => /…\(\d+\)/.test(JSON.stringify(state[key])))
+    for (const key of cut.slice(0, 10)) full[key] = (await request('read-state', { room, key }, 3000)).value
+    return full
+  }
+  const tutor = options.tutor ? new Tutor({ ...options.tutor, folder, lab: options.lab, roomState }) : null
   // a question a student sent to the class tab, which passes the answer on
   const askTutor = (report: Report) => {
     const { id, student, name, room, text } = report

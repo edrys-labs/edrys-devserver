@@ -161,6 +161,7 @@ Start edrys-dev with `--tutor`, and your students get a 🤖 button in the class
 
 - **It knows the lab.** The tutor reads `lab.yml` with every question, so it always knows the version the class shows. It gives hints and explanations instead of whole solutions.
 - **Notes only for the tutor.** Put a file `tutor.md` next to `lab.yml`, for example "Task 2 is about Ohm's law, don't give the number". Students don't receive this file. A student who tries hard may still get the tutor to repeat it, so keep secrets out of it.
+- **It sees the student's room.** With each question it gets what the modules of the student's room share, such as the code in an editor, read through your `/?dev` tab. It cannot change it or run it. It does not see terminal output or the screen, so it asks the student to paste those.
 - **It cannot do anything but answer.** It runs as a separate `claude` without tools, MCP servers or your settings. A student cannot reach your files, your shell or the agent that edits your lab.
 - **Your `/?dev` tab passes the messages on.** Keep it open. The button shows only while it is, and only on an edrys-Lite new enough to have it, on your computer and on the students' site alike.
 - **Each student has their own conversation**, which continues with the next question. Chats are saved in `.edrys-dev/tutor/`. Your agent can read them with `read_student_chats` and tell you where students get stuck.
