@@ -181,3 +181,39 @@ test('stops cleanly on SIGTERM, as on Ctrl+C', { timeout: 10000 }, async () => {
   const [code, killedBy] = await new Promise((resolve) => child.once('exit', (...args) => resolve(args)))
   assert.deepEqual([code, killedBy], [0, null])
 })
+
+test('the terminal prints the students\' link, and warns about localhost modules', { timeout: 10000 }, async () => {
+  const own = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-students-'))
+  const file = path.join(own, 'lab.yml')
+  fs.writeFileSync(file, 'name: One\nmodules:\n  - url: http://localhost:3211/mine/index.html\n')
+  const run = async (args) => {
+    const child = spawn(process.execPath, ['dist/index.js', file, '-p', '3296', ...args], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    child.stdout.on('data', (d) => (out += d))
+    child.stderr.on('data', (d) => (out += d))
+    await new Promise((resolve) => child.stdout.once('data', resolve))
+    const origin = out.match(/http:\/\/localhost:\d+/)[0]
+    await fetch(origin + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ type: 'open', url: `${origin}/?/classroom/abc/hash#comm=xyz` }),
+    })
+    for (let i = 0; i < 50 && !/students/.test(out); i++) await new Promise((r) => setTimeout(r, 20))
+    await new Promise((r) => setTimeout(r, 100))
+    child.kill()
+    return out
+  }
+  try {
+    const hosted = await run(['--student-url', 'https://edrys-test.netlify.app/'])
+    assert.match(hosted, /students join at:\n {2}https:\/\/edrys-test\.netlify\.app\/\?\/classroom\/abc\/hash#comm=xyz/)
+    assert.match(hosted, /modules from localhost/)
+    const local = await run(['--local'])
+    assert.match(local, /--local reaches this machine only/)
+    assert.doesNotMatch(local, /students join at/)
+
+    const bad = spawn(process.execPath, ['dist/index.js', file, '--student-url', 'edrys-labs.github.io'], { stdio: 'ignore' })
+    assert.equal(await new Promise((resolve) => bad.once('exit', resolve)), 1)
+  } finally {
+    fs.rmSync(own, { recursive: true })
+  }
+})

@@ -4,8 +4,9 @@ import path from 'node:path'
 import { parseArgs } from 'node:util'
 import open from 'open'
 import { startDevServer, type Report } from './server.js'
-import { startMcp } from './mcp.js'
+import { startMcp, studentLink, localUrls } from './mcp.js'
 import { reachable } from './origin.js'
+import { readSaved } from './watch.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -23,13 +24,18 @@ Usage: edrys-dev [lab.yml] [options]
   -m, --modules <dir> local modules, one per subfolder, served on the next
                       port (default ./modules next to the lab, if it exists);
                       a save there reloads that module in the class
+      --student-url <url>
+                      the edrys-Lite site students on other machines join
+                      on, default https://edrys-labs.github.io/; it must use
+                      the same transport (not with --local)
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
   -h, --help          show this help
 
 The tab opened at /?dev owns the class and republishes it whenever the lab
-file changes. Open its share link in another browser to join as a student.`
+file changes. Open its share link in another browser to join as a student;
+students on other machines join through the link printed for them.`
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -39,6 +45,7 @@ const { values, positionals } = parseArgs({
     host: { type: 'string', default: '127.0.0.1' },
     local: { type: 'boolean', default: false },
     modules: { type: 'string', short: 'm' },
+    'student-url': { type: 'string', default: 'https://edrys-labs.github.io/' },
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
@@ -71,6 +78,12 @@ if (!fs.existsSync(lab)) {
   process.exit(1)
 }
 
+const studentSite = values['student-url']
+if (!URL.canParse(studentSite) || !/^https?:$/.test(new URL(studentSite).protocol)) {
+  console.error(`edrys-dev: --student-url must be an http(s) address, not ${studentSite}`)
+  process.exit(1)
+}
+
 const nextToLab = path.join(path.dirname(lab), 'modules')
 const modules = values.modules ? path.resolve(values.modules) : fs.existsSync(nextToLab) ? nextToLab : undefined
 if (modules && !fs.statSync(modules, { throwIfNoEntry: false })?.isDirectory()) {
@@ -96,10 +109,18 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   })
 }
 
-server.bus.on('report', (report: Report) => {
+server.bus.on('report', async (report: Report) => {
   switch (report.type) {
     case 'open':
       say(`class open, share link:\n  ${report.url}`)
+      if (values.local) {
+        say('students: --local reaches this machine only; start without it to let others join')
+        break
+      }
+      say(`students join at:\n  ${studentLink(report.url, studentSite)}`)
+      if (localUrls(await readSaved(lab).catch(() => '')).length) {
+        console.error('edrys-dev: the lab loads modules from localhost, which students cannot load: publish them first')
+      }
       break
     case 'error':
       console.error(`lab error: ${report.message}`)
@@ -118,5 +139,5 @@ if (reachable(values.host)) {
       (values.mcp ? ' and type to the agent in its chat' : '')
   )
 }
-if (values.mcp) startMcp(server, { lab, url })
+if (values.mcp) startMcp(server, { lab, url, studentSite: values.local ? null : studentSite })
 if (values.open) await open(url)

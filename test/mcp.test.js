@@ -6,7 +6,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import http from 'node:http'
 import { spawn } from 'node:child_process'
-import { forgetOld } from '../dist/mcp.js'
+import { forgetOld, studentLink } from '../dist/mcp.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-mcp-'))
 const lab = path.join(dir, 'lab.yml')
@@ -145,6 +145,7 @@ test('get_state names the lab, the class tab and the event stream', async () => 
   assert.match(value.url, /^http:\/\/localhost:\d+\/\?dev$/)
   assert.equal(value.connected, false)
   assert.equal(value.share, null)
+  assert.equal(value.student_link, null)
   assert.match(value.events, /\/edrys-dev\/agent\/[0-9a-f]{32}$/)
   assert.equal(value.watched, false)
 })
@@ -669,6 +670,8 @@ test('goto as student gives a link from the other local address, as station the 
     opened: false,
     joined: false,
   })
+  // students on other machines: the hosted site, same class, same transport
+  assert.equal((await tool('get_state')).value.student_link, 'https://edrys-labs.github.io/?/classroom/abc/hash#comm=xyz')
   const station = (await tool('goto', { as: 'station', open: false })).value
   // the owner runs the station: same address, same key
   assert.equal(station.url, `${origin}/?/station/abc/hash#comm=xyz`)
@@ -766,4 +769,14 @@ test('forgetOld drops what is too old, then the oldest beyond the limit', () => 
 test('unknown methods and tools are protocol errors', async () => {
   assert.equal((await call('nope')).error.code, -32601)
   assert.equal((await call('tools/call', { name: 'nope' })).error.code, -32602)
+})
+
+test('studentLink keeps the class and its transport, on the hosted site', () => {
+  const share = 'http://localhost:3210/?/classroom/abc/hash#comm=xyz'
+  assert.equal(studentLink(share, 'https://edrys-test.netlify.app'), 'https://edrys-test.netlify.app/?/classroom/abc/hash#comm=xyz')
+  assert.equal(studentLink(share, 'https://example.org/edrys/'), 'https://example.org/edrys/?/classroom/abc/hash#comm=xyz')
+  assert.equal(
+    studentLink('http://127.0.0.1:3210/?/classroom/abc/hash', 'https://edrys-labs.github.io/?old#x'),
+    'https://edrys-labs.github.io/?/classroom/abc/hash'
+  )
 })

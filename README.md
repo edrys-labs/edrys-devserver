@@ -38,6 +38,8 @@ You need [Node.js](https://nodejs.org) 20 or newer.
      http://localhost:3210/?dev
    class open, share link:
      http://localhost:3210/?/classroom/…
+   students join at:
+     https://edrys-labs.github.io/?/classroom/…
    ```
 
 3. Change something in `lab.yml` and save. The class updates on its own.
@@ -50,6 +52,12 @@ Stop it with `Ctrl+C`.
 
 - **The `/?dev` tab is yours.** It is the teacher's view of the class. Keep it open: it is the tab that picks up your changes to `lab.yml`.
 - **Try the lab as a student or station.** Open the share link in a *different* browser or a private window. In the same browser you would be the teacher again.
+- **Let students in from their own computers.** Give them the link after `students join at:`. It opens the same class on https://edrys-labs.github.io, so students need nothing but a browser, while your `/?dev` tab stays on your computer and keeps following `lab.yml`. Keep that tab open while students join: they get the class from the browsers that have it open. Three things to know:
+  - Both sides must connect the same way. Without `--local` they do. With `--local` the class runs through edrys-dev on your computer, which other computers cannot reach, so edrys-dev prints no link for students.
+  - If you picked a WebSocket server in the class's Settings, the link carries it (`#comm=…`); don't cut that part off.
+  - Modules from `http://localhost:…` (see below) do not load on the students' computers. edrys-dev warns you about them.
+  
+  `--student-url` points the link to another edrys-Lite site, e.g. your own copy; it has to use the same connection settings as the edrys-Lite inside edrys-dev.
 - **The file wins.** Anything you change in the class's Settings dialog is replaced the next time you save `lab.yml`. Make your changes in the file.
 - **Restarting is safe.** The same `lab.yml` reopens the same class, so share links you opened before keep working.
 - **Mistakes are reported.** If the class cannot take your lab (for example a YAML typo), the terminal prints `lab error: …`. Fix the file and save again.
@@ -138,7 +146,7 @@ For safety, the chat only accepts messages from the class page on your own compu
 
 | Tool | |
 |---|---|
-| `get_state` | the lab file, class address, share link, rooms, users and modules |
+| `get_state` | the lab file, class address, share links (also the one for students), rooms, users and modules |
 | `goto` | move your class tab to a room, or open a student or station tab |
 | `chat`, `read_chat` | write to you in the class chat, read your messages |
 | `read_messages` | messages between modules, and errors from your own modules |
@@ -159,6 +167,7 @@ edrys-dev [lab.yml] [options]
 | `-p, --port <port>` | `3210` | if it is taken, the next free port is used |
 | `--local` | off | connect the class through edrys-dev instead of the internet; works offline |
 | `-m, --modules <dir>` | `./modules`, if it exists | folder with your own modules |
+| `--student-url <url>` | `https://edrys-labs.github.io/` | the edrys-Lite site in the link for students |
 | `--host <host>` | `127.0.0.1` | `0.0.0.0` lets others on your network open the class (and, with `--mcp`, write to your agent) |
 | `--mcp` | off | for AI agents; set it in `.mcp.json`, see above |
 | `-h, --help` | | show help |
@@ -169,6 +178,7 @@ edrys-dev [lab.yml] [options]
 - **The share link opens me as the teacher.** Open it in another browser or a private window.
 - **My changes in Settings are gone.** They are replaced by `lab.yml` on every save. Put them into the file.
 - **The class doesn't connect / no internet.** Try `--local`.
+- **Students see an empty class.** Keep your `/?dev` tab open while they join. Check that they got the whole link, including any `#comm=…` at the end, and that you didn't start with `--local`. A site set with `--student-url` must use the same connection settings as edrys-dev's edrys-Lite.
 - **A different port than 3210.** Another program uses it; edrys-dev took the next free one. The terminal shows the address.
 - **The agent doesn't answer in the chat.** Check that your agent is running in the lab folder with `.mcp.json`, and if it does not wake up on its own, start the `chat` prompt (see above).
 
