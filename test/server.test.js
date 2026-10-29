@@ -82,6 +82,58 @@ test('passes browser reports on', async () => {
   assert.equal(server.state().share, 'x')
 })
 
+test('the chat panel gets the students\' link, again when the class opens and the lab changes', async () => {
+  const labDir = fs.mkdtempSync(path.join(dir, 'link-'))
+  const linkLab = path.join(labDir, 'lab.yml')
+  fs.writeFileSync(linkLab, 'name: Link\n')
+  const own = await startDevServer({ lab: linkLab, port: 3300, host: '127.0.0.1', studentSite: 'https://edrys-labs.github.io/' })
+  const origin = `http://127.0.0.1:${own.port}`
+  const seen = []
+  const request = http.get(origin + '/edrys-dev/link/events')
+  try {
+    const response = await new Promise((resolve) => request.on('response', resolve))
+    response.setEncoding('utf8')
+    response.on('data', (chunk) => seen.push(...[...chunk.matchAll(/^data: (.*)$/gm)].map((m) => JSON.parse(m[1]))))
+    const until = async (n) => {
+      for (let i = 0; seen.length < n && i < 50; i++) await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    await until(1)
+    assert.deepEqual(seen[0], { reachable: true, link: null, local_urls: [] })
+
+    await fetch(origin + '/edrys-dev/bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ type: 'open', url: `${origin}/?/classroom/abc/hash#comm=xyz` }),
+    })
+    await until(2)
+    assert.equal(seen[1].link, 'https://edrys-labs.github.io/?/classroom/abc/hash#comm=xyz')
+
+    fs.writeFileSync(linkLab, 'name: Link\nmodules:\n  - url: http://localhost:3301/mine/index.html\n')
+    await until(3)
+    assert.deepEqual(seen[2].local_urls, ['http://localhost:3301/mine/index.html'])
+  } finally {
+    request.destroy()
+    await own.close()
+  }
+
+  // --local: no link, and the panel says why
+  const local = await startDevServer({ lab: linkLab, port: 3305, host: '127.0.0.1', studentSite: null })
+  try {
+    const text = await new Promise((resolve) => {
+      const req = http.get(`http://127.0.0.1:${local.port}/edrys-dev/link/events`, (res) => {
+        res.setEncoding('utf8')
+        res.once('data', (chunk) => {
+          req.destroy()
+          resolve(chunk)
+        })
+      })
+    })
+    assert.deepEqual(JSON.parse(text.replace(/^data: /, '')), { reachable: false, link: null, local_urls: ['http://localhost:3301/mine/index.html'] })
+  } finally {
+    await local.close()
+  }
+})
+
 test('refuses reports from pages of another origin, and from programs', async () => {
   for (const headers of [{ Origin: 'https://some-module.example' }, {}]) {
     const response = await fetch(base + '/edrys-dev/bridge', {

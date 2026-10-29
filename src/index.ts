@@ -121,6 +121,7 @@ const server = await startDevServer({
   local: values.local,
   modules,
   agent: values.mcp,
+  studentSite: values.local ? null : studentSite,
   tutor: values.tutor ? { agent: tutorAgent, model: values['tutor-model'] } : undefined,
 })
 server.tutor?.on('failed', ({ name, error }) => console.error(`tutor: no answer for ${name}: ${error}`))

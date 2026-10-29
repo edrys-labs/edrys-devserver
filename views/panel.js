@@ -70,6 +70,21 @@
     .spacer { flex: 1; }
     .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
     .view[hidden] { display: none; }
+    .share { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .share[hidden] { display: none; }
+    .share .row { display: flex; gap: 6px; align-items: center; }
+    .share .row[hidden] { display: none; }
+    .share .row span { font-weight: 600; white-space: nowrap; }
+    .share input {
+      flex: 1; min-width: 0; font: 12px ui-monospace, monospace; padding: 4px 6px; border-radius: 6px;
+      border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+    }
+    .share button {
+      font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--accent); background: transparent; color: var(--accent);
+    }
+    .share .note { margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .share .note:empty { display: none; }
     .switch { padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
     .switch label { display: flex; gap: 6px; align-items: center; font-weight: 600; }
     .switch .note { margin-top: 2px; color: var(--muted); font-size: 12px; }
@@ -145,6 +160,14 @@
           <span class="spacer"></span>
           <small title="edrys-dev: not the class's chat">only you see this</small>
         </header>
+        <div class="share" hidden>
+          <div class="row" hidden>
+            <span>Link for students</span>
+            <input readonly aria-label="Link for your students">
+            <button type="button">Copy</button>
+          </div>
+          <div class="note" aria-live="polite"></div>
+        </div>
         <div class="view" id="agent" role="tabpanel">
           <div class="log" role="log" aria-live="polite"></div>
           <div class="problem" role="alert" hidden></div>
@@ -579,6 +602,45 @@
       }
     }
   }
+
+  // --- the link for students: the class's share link would only work on this computer ---
+  const shareBox = root.querySelector('.share')
+  const shareRow = shareBox.querySelector('.row')
+  const shareInput = shareBox.querySelector('input')
+  const shareButton = shareBox.querySelector('button')
+  const shareNote = shareBox.querySelector('.note')
+
+  function showLink({ reachable, link, local_urls }) {
+    shareBox.hidden = false
+    shareRow.hidden = !link
+    shareInput.value = link || ''
+    const modules = local_urls.length
+    shareNote.textContent = !reachable
+      ? 'Students on other computers cannot join: edrys-dev runs with --local, which reaches this computer only.'
+      : !link
+        ? 'The link for students appears once the class is open.'
+        : modules
+          ? `${modules === 1 ? 'A module loads' : `${modules} modules load`} from this computer (localhost) and will not load for students: publish ${modules === 1 ? 'it' : 'them'} first.`
+          : ''
+  }
+
+  shareInput.addEventListener('focus', () => shareInput.select())
+  shareButton.addEventListener('click', async () => {
+    let copied = false
+    try {
+      await navigator.clipboard.writeText(shareInput.value)
+      copied = true
+    } catch {
+      shareInput.select()
+      try {
+        copied = document.execCommand('copy')
+      } catch {}
+    }
+    shareButton.textContent = copied ? 'Copied' : 'Select and copy it'
+    setTimeout(() => (shareButton.textContent = 'Copy'), 2000)
+  })
+
+  new EventSource('/edrys-dev/link/events').onmessage = (event) => showLink(JSON.parse(event.data))
 
   // the renderer first, then the messages that need it
   let loaded = 0

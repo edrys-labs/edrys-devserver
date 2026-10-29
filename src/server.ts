@@ -11,6 +11,7 @@ import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
 import { Chat, explain, panelFiles, panelScript } from './chat.js'
 import { Tutor, threadId, type TutorOptions } from './tutor.js'
+import { localUrls, studentLink } from './mcp.js'
 
 export type Report = { type: string; [key: string]: any }
 
@@ -64,6 +65,11 @@ export type DevServerOptions = {
   modules?: string
   /** An agent is connected (--mcp): the class tab gets its chat panel. */
   agent?: boolean
+  /**
+   * The hosted edrys-Lite students on other machines join on (--student-url);
+   * the chat panel shows them the link. Null or left out: they cannot (--local).
+   */
+  studentSite?: string | null
   /** Students ask a tutor through the class tab (--tutor). */
   tutor?: Pick<TutorOptions, 'agent' | 'model' | 'command' | 'concurrency' | 'perHour' | 'timeoutMs'>
 }
@@ -197,7 +203,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       pending.get(report.id)?.(report)
       return res.sendStatus(204)
     }
-    if (report.type === 'open' && typeof report.url === 'string') share = report.url
+    if (report.type === 'open' && typeof report.url === 'string') {
+      share = report.url
+      tellLink()
+    }
     if (report.type === 'class') {
       const { type, ...state } = report
       classState = state as ClassState
@@ -313,6 +322,30 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   panelFiles(app)
 
   // edrys-Lite's page, with panel.js (the chat shows only in the class tab)
+  // the link for students in the chat panel: the teacher may see neither the
+  // terminal nor the agent. Again when the class opens and when the lab changes.
+  const linkWatchers = new Set<express.Response>()
+  const linkState = async () => ({
+    reachable: !!options.studentSite,
+    link: share && options.studentSite ? studentLink(share, options.studentSite) : null,
+    local_urls: localUrls(await readSaved(options.lab).catch(() => '')),
+  })
+  async function tellLink() {
+    if (!linkWatchers.size) return
+    const data = `data: ${JSON.stringify(await linkState())}\n\n`
+    for (const watcher of linkWatchers) watcher.write(data)
+  }
+  app.get('/edrys-dev/link/events', async (req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    })
+    res.write(`data: ${JSON.stringify(await linkState())}\n\n`)
+    linkWatchers.add(res)
+    req.on('close', () => linkWatchers.delete(res))
+  })
+
   app.get(['/', '/index.html'], async (req, res) => {
     const page = await fs.readFile(path.join(edrysDist(), 'index.html'), 'utf8')
     res.type('html').send(page + panelScript(!!options.agent, !!tutor))
@@ -342,7 +375,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       })
       send(event, { id, ...data })
     })
-  const stopWatching = watchFile(options.lab, () => send('reload-lab', {}))
+  const stopWatching = watchFile(options.lab, () => {
+    send('reload-lab', {})
+    tellLink()
+  })
 
   const port = await listen(server, options.port, options.host)
 

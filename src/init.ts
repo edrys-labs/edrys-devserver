@@ -41,6 +41,8 @@ When a session starts:
 
 The user may not be a programmer. Answer in plain words, show no YAML or code in the chat unless they ask, and offer choices as chat forms (buttons).
 
+When they want to share the class or ask how students join, give them \`get_state.student_link\` (the class's own share link works only on this computer). It is also shown at the top of the 🤖 panel.
+
 If the edrys-lab and edrys-module skills are installed, use them to write the lab and its modules.
 `
 

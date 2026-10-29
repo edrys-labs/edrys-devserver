@@ -52,7 +52,7 @@ Stop it with `Ctrl+C`.
 
 - **The `/?dev` tab is yours.** It is the teacher's view of the class. Keep it open: it is the tab that picks up your changes to `lab.yml`.
 - **Try the lab as a student or station.** Open the share link in a *different* browser or a private window. In the same browser you would be the teacher again.
-- **Let students in from their own computers.** Give them the link after `students join at:`. It opens the same class on https://edrys-labs.github.io, so students need nothing but a browser, while your `/?dev` tab stays on your computer and keeps following `lab.yml`. Keep that tab open while students join: they get the class from the browsers that have it open. Three things to know:
+- **Let students in from their own computers.** Give them the link after `students join at:`. It opens the same class on https://edrys-labs.github.io, so students need nothing but a browser, while your `/?dev` tab stays on your computer and keeps following `lab.yml`. Keep that tab open while students join: they get the class from the browsers that have it open. With an agent or the tutor, the 🤖 panel in your `/?dev` tab shows this link at the top, with a Copy button. The class's own share button gives the address of your tab, which works only on your computer. Three things to know:
   - Both sides must connect the same way. Without `--local` they do. With `--local` the class runs through edrys-dev on your computer, which other computers cannot reach, so edrys-dev prints no link for students.
   - If you picked a WebSocket server in the class's Settings, the link carries it (`#comm=…`); don't cut that part off.
   - Modules from `http://localhost:…` (see below) do not load on the students' computers. edrys-dev warns you about them.
