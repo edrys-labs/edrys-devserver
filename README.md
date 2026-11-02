@@ -52,7 +52,7 @@ Stop it with `Ctrl+C`.
 
 - **The `/?dev` tab is yours.** It is the teacher's view of the class. Keep it open: it is the tab that picks up your changes to `lab.yml`.
 - **Try the lab as a student or station.** Open the share link in a *different* browser or a private window. In the same browser you would be the teacher again.
-- **Let students in from their own computers.** Give them the link after `students join at:`. It opens the same class on https://edrys-labs.github.io, so students need nothing but a browser, while your `/?dev` tab stays on your computer and keeps following `lab.yml`. Keep that tab open while students join: they get the class from the browsers that have it open. With an agent or the tutor, the 🤖 panel in your `/?dev` tab shows this link at the top, with a Copy button. The class's Settings (Members, Communication) give the same link, and below it the address of your tab, which works only on your computer. Three things to know:
+- **Let students in from their own computers.** Give them the link after `students join at:`. It opens the same class on https://edrys-labs.github.io, so students need nothing but a browser, while your `/?dev` tab stays on your computer and keeps following `lab.yml`. Keep that tab open while students join: they get the class from the browsers that have it open. With an agent or the tutor, the agent chat panel in your `/?dev` tab shows this link at the top, with a Copy button. The class's Settings (Members, Communication) give the same link, and below it the address of your tab, which works only on your computer. Three things to know:
   - Both sides must connect the same way. Without `--local` they do. With `--local` the class runs through edrys-dev on your computer, which other computers cannot reach, so edrys-dev prints no link for students.
   - If you picked a WebSocket server in the class's Settings, the link carries it (`#comm=…`); don't cut that part off.
   - Modules from `http://localhost:…` (see below) do not load on the students' computers. edrys-dev warns you about them.
@@ -138,7 +138,7 @@ By hand:
 
 ### Talking to the agent from the class
 
-The class tab has a chat button (🤖, bottom right). What you write there goes straight to the agent. Only you see this chat; it is not the class chat. The agent can answer with text and also with buttons or checkboxes for you to pick from.
+The class tab has a chat button (robot icon, bottom right). What you write there goes straight to the agent. Only you see this chat; it is not the class chat. The agent can answer with text and also with buttons or checkboxes for you to pick from.
 
 When the class cannot take your lab file, for example after a typing mistake, a red note in the chat says so in plain words, with edrys-Lite's message under "Details". It goes away once the file loads again.
 
@@ -165,14 +165,14 @@ For safety, the chat only accepts messages from the class page on your own compu
 
 ## A tutor for your students
 
-Start edrys-dev with `--tutor`, and your students get a 🤖 button in the class. What they ask there is answered by an AI on your computer: [Claude Code](https://claude.com/claude-code) must be installed and signed in (`claude` in a terminal). With `--tutor-agent codex`, [Codex](https://developers.openai.com/codex) answers instead (`codex login` first). Students need nothing but the class link.
+Start edrys-dev with `--tutor`, and your students get a tutor button (robot icon) in the class's top bar. What they ask there is answered by an AI on your computer: [Claude Code](https://claude.com/claude-code) must be installed and signed in (`claude` in a terminal). With `--tutor-agent codex`, [Codex](https://developers.openai.com/codex) answers instead (`codex login` first). Students need nothing but the class link.
 
 - **It knows the lab.** The tutor reads `lab.yml` with every question, so it always knows the version the class shows. It gives hints and explanations instead of whole solutions.
 - **Notes only for the tutor.** Put a file `tutor.md` next to `lab.yml`, for example "Task 2 is about Ohm's law, don't give the number". Students don't receive this file. A student who tries hard may still get the tutor to repeat it, so keep secrets out of it.
 - **It sees the student's room.** With each question it gets what the modules of the student's room share, such as the code in an editor, read through your `/?dev` tab. It cannot change it or run it. It does not see terminal output or the screen, so it asks the student to paste those.
 - **It cannot do anything but answer.** It runs as a separate `claude` without tools, MCP servers or your settings. A student cannot reach your files, your shell or the agent that edits your lab. Codex has no switch for "no tools", so edrys-dev turns off each of its tools and your config, runs it read-only, and drops any answer for which it still used a tool. This was checked with Codex 0.165. If a newer version no longer knows one of these settings, the tutor gives no answers, and the terminal says why.
 - **Your `/?dev` tab passes the messages on.** Keep it open. The button shows only while it is, and only on an edrys-Lite new enough to have it, on your computer and on the students' site alike.
-- **You watch and switch it in the panel.** The 🤖 button at the bottom right of your `/?dev` tab has a Students view: every question and answer as it happens, and a switch that turns the tutor off and on without restarting. While it is off, students don't see their button.
+- **You watch and switch it in the panel.** The round chat button at the bottom right of your `/?dev` tab has a Students view: every question and answer as it happens, and a switch that turns the tutor off and on without restarting. While it is off, students don't see their button.
 - **Each student has their own conversation**, which continues with the next question. Chats are saved in `.edrys-dev/tutor/`, and the agent keeps its own copy of each conversation (Claude Code and Codex in their usual session folders). Your agent can read them with `read_student_chats` and tell you where students get stuck.
 - **Limits.** At most two answers are written at once; a question that finds no free turn within 30 seconds gets "the tutor is busy". Each student can have one open question and up to 20 questions an hour, of up to 2000 characters each. The whole class gets up to 200 questions an hour, not counting those turned away as busy (`--tutor-per-hour` changes it), so a student cannot get past the limits with new names and use up your account. When the class reaches it, the terminal and the Students view say so.
 - **Cost.** Each question uses your Claude or OpenAI account. `--tutor-model` picks a cheaper model, e.g. `--tutor-model haiku`. Check whether your plan's terms allow answering students with it, or use an API key.
