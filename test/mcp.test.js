@@ -264,7 +264,7 @@ async function base() {
 test('the page carries the chat panel', async () => {
   const page = await (await fetch((await base()) + '/?dev')).text()
   assert.match(page, /<script src="\/edrys-dev\/panel\.js" defer data-chat><\/script>$/)
-  for (const file of ['panel.js', 'marked.js', 'purify.js']) {
+  for (const file of ['panel.js', 'panel.css', 'marked.js', 'purify.js']) {
     assert.equal((await fetch(`${await base()}/edrys-dev/${file}`)).status, 200, file)
   }
 })

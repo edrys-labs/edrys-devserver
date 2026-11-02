@@ -472,6 +472,7 @@ const views = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'vie
 // browser builds that set window.marked and window.DOMPurify
 const PANEL_FILES: Record<string, () => string> = {
   'panel.js': () => path.join(views, 'panel.js'),
+  'panel.css': () => path.join(views, 'panel.css'),
   'marked.js': () => path.join(path.dirname(require.resolve('marked/package.json')), 'lib', 'marked.umd.js'),
   'purify.js': () => require.resolve('dompurify/purify.min.js'),
 }

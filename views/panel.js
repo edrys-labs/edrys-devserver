@@ -20,223 +20,6 @@
   const OPEN_KEY = 'edrys-dev:chat-open'
   const VIEW_KEY = 'edrys-dev:chat-view'
 
-  // edrys-Lite's colors: Vuetify puts the theme's on :root as `--v-theme-<name>`
-  // (r,g,b), and they reach into the shadow root; the fallbacks are its Light
-  // theme, for an edrys-Lite without them
-  const css = `
-    :host { all: initial; }
-    * { box-sizing: border-box; font-family: 'Noto Sans Variable', 'Noto Sans', system-ui, sans-serif; }
-    .wrap {
-      --panel: rgb(var(--v-theme-panel, 243,243,243));
-      --panel-line: rgb(var(--v-theme-panel-line, 222,222,222));
-      --card: rgb(var(--v-theme-message, 255,255,255));
-      --card-edge: rgb(var(--v-theme-module-edge, 228,230,234));
-      --tonal: rgb(var(--v-theme-tonal, 235,235,235));
-      --segment: rgb(var(--v-theme-segment, 255,255,255));
-      --field: rgb(var(--v-theme-field, 255,255,255));
-      --field-line: rgb(var(--v-theme-field-line, 196,196,196));
-      --track: rgb(var(--v-theme-track, 222,222,222));
-      --fg: rgb(var(--v-theme-on-surface, 27,32,41));
-      --fg-2: rgb(var(--v-theme-text-2, 59,66,77));
-      --muted: rgb(var(--v-theme-muted, 95,103,115));
-      --faint: rgb(var(--v-theme-faint, 160,166,174));
-      --primary: rgb(var(--v-theme-primary, 54,100,190));
-      --on-primary: rgb(var(--v-theme-on-primary, 255,255,255));
-      --own: rgb(var(--v-theme-own-message, 238,244,254));
-      --you: rgb(var(--v-theme-you, 44,86,168));
-      --badge: rgb(var(--v-theme-badge, 230,67,67));
-      --danger-bg: rgb(var(--v-theme-danger-tint, 255,231,228));
-      --danger: rgb(var(--v-theme-error, 183,24,36));
-      --warn-bg: rgb(var(--v-theme-warning-tint, 254,229,179));
-      --warn: rgb(var(--v-theme-warning, 93,57,4));
-      --focus: rgb(var(--v-theme-focus, 54,100,190));
-      --link: rgb(var(--v-theme-link, 0,87,154));
-      --msg-shadow: 0 1px 2px rgba(20,25,35,.06), 0 0 0 1px rgb(var(--v-theme-message-edge, 232,234,237));
-      --card-shadow: 0 1px 2px rgba(20,25,35,.05), 0 0 0 1px var(--card-edge);
-      --pop-shadow: 0 12px 32px rgba(20,25,35,.14), 0 0 0 1px var(--card-edge);
-      color: var(--fg);
-    }
-    .wrap.dark {
-      --msg-shadow: none;
-      --card-shadow: 0 0 0 1px rgb(var(--v-theme-module-line, 44,51,61));
-      --pop-shadow: 0 12px 32px rgba(0,0,0,.45), 0 0 0 1px rgb(var(--v-theme-line, 57,65,76));
-    }
-    svg { flex-shrink: 0; }
-    [hidden] { display: none !important; }
-    button { font: inherit; cursor: pointer; }
-    .mono { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; }
-
-    .toggle {
-      position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
-      width: 52px; height: 52px; border-radius: 50%; border: 0;
-      background: var(--primary); color: var(--on-primary);
-      display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 6px 16px rgba(20,25,35,.25);
-    }
-    .toggle .dot {
-      position: absolute; top: 3px; right: 3px; width: 12px; height: 12px;
-      border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 2px var(--panel); display: none;
-    }
-    .toggle.unread .dot { display: block; }
-    .toggle .chevron { display: none; }
-    .toggle[aria-expanded="true"] {
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg-2);
-      box-shadow: 0 6px 16px rgba(20,25,35,.15);
-    }
-    .toggle[aria-expanded="true"] .sparkles { display: none; }
-    .toggle[aria-expanded="true"] .chevron { display: block; }
-
-    .panel {
-      position: fixed; right: 16px; bottom: 80px; z-index: 2147483000;
-      width: min(400px, calc(100vw - 32px)); height: min(700px, calc(100vh - 100px));
-      display: none; flex-direction: column; background: var(--panel);
-      border-radius: 16px; overflow: hidden; box-shadow: var(--pop-shadow);
-    }
-    .panel.open { display: flex; }
-    header {
-      display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 8px 0 12px; flex-shrink: 0;
-      border-bottom: 1px solid var(--panel-line);
-    }
-    .title { font-size: 14px; font-weight: 600; }
-    .tabs { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--tonal); }
-    .tabs button {
-      display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-radius: 7px;
-      background: transparent; color: var(--muted); font-size: 12px; font-weight: 600;
-    }
-    .tabs button[aria-selected="true"] { background: var(--segment); color: var(--fg); box-shadow: 0 1px 2px rgba(20,25,35,.12); }
-    .wrap.dark .tabs button[aria-selected="true"] { box-shadow: none; }
-    .tabs .count {
-      min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; text-align: center;
-      background: var(--badge); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px;
-    }
-    .tabs .count:empty { display: none; }
-    .spacer { flex: 1; }
-    .private { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 500; color: var(--muted); white-space: nowrap; }
-    .icon-btn {
-      width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .icon-btn:hover { background: var(--tonal); }
-
-    .top { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-bottom: 1px solid var(--panel-line); flex-shrink: 0; }
-    .top:not(:has(> :not([hidden]))) { display: none; }
-    .select { position: relative; }
-    .select svg { position: absolute; right: 10px; top: 10px; color: var(--muted); pointer-events: none; }
-    select {
-      width: 100%; height: 36px; padding: 0 32px 0 12px; border-radius: 8px; appearance: none;
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg); font-size: 13px;
-    }
-    .label { font-size: 12px; font-weight: 500; color: var(--muted); }
-    .share { display: flex; flex-direction: column; gap: 6px; }
-    .share .row { display: flex; gap: 8px; }
-    .share input {
-      flex: 1; min-width: 0; height: 36px; padding: 0 10px; border-radius: 8px;
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg); font-size: 12px;
-    }
-    .outline {
-      display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border-radius: 8px;
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg); font-size: 13px; font-weight: 600;
-    }
-    .warn-note { display: flex; gap: 6px; font-size: 12px; line-height: 1.45; color: var(--warn); }
-    .warn-note svg { margin-top: 1px; }
-    .warn-note:has(span:empty) { display: none; }
-    .alert {
-      display: flex; gap: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.45;
-    }
-    .alert svg { margin-top: 1px; }
-    .alert.warn { background: var(--warn-bg); color: var(--warn); }
-    .alert.danger { background: var(--danger-bg); color: var(--danger); }
-    .alert:has(> span:empty) { display: none; }
-
-    .switch { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 500; cursor: pointer; }
-    .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
-    .switch .track {
-      position: relative; width: 36px; height: 20px; border-radius: 999px; background: var(--field-line); flex-shrink: 0;
-    }
-    .switch .track::after {
-      content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
-      background: #fff; transition: left .15s;
-    }
-    .switch input:checked + .track { background: var(--primary); }
-    .switch input:checked + .track::after { left: 18px; }
-    .switch input:focus-visible + .track { outline: 2px solid var(--focus); outline-offset: 2px; }
-    .note { font-size: 12px; line-height: 1.45; color: var(--muted); }
-    .note:empty { display: none; }
-
-    .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    .problem {
-      display: flex; gap: 10px; margin: 12px 12px 0; padding: 12px 12px 12px 14px; border-radius: 10px;
-      background: var(--danger-bg); color: var(--danger); font-size: 13px; line-height: 1.5;
-    }
-    .problem > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-    .problem summary { cursor: pointer; font-size: 12px; font-weight: 600; }
-    .problem pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; }
-    .log, .threads { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-    .msg { max-width: 85%; padding: 9px 12px; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
-    .msg.ai, .msg.tutor-answer { align-self: flex-start; max-width: 92%; border-radius: 12px 12px 12px 4px; background: var(--card); box-shadow: var(--msg-shadow); }
-    .msg.user, .msg.answer { align-self: flex-end; border-radius: 12px 12px 4px 12px; background: var(--primary); color: var(--on-primary); white-space: pre-wrap; }
-    .msg > div > :first-child { margin-top: 0; } .msg > div > :last-child { margin-bottom: 0; }
-    .msg p { margin: 0 0 8px; }
-    .msg pre { margin: 0 0 8px; padding: 8px 10px; border-radius: 8px; overflow-x: auto; background: var(--tonal); font-size: 12px; line-height: 1.5; }
-    .msg code { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; font-size: 12px; }
-    .msg :not(pre) > code { padding: 1px 4px; border-radius: 4px; background: var(--tonal); }
-    .msg a { color: var(--link); }
-    .msg form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
-    fieldset { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
-    legend { padding: 0 0 6px; font-size: 12px; font-weight: 500; color: var(--muted); }
-    label.option { font-size: 13px; display: flex; gap: 8px; align-items: center; width: 100%; }
-    label.option input { accent-color: var(--primary); margin: 0; }
-    button.choice, button.submit {
-      height: 34px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 600;
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg);
-    }
-    .single button.choice:first-of-type { border-color: var(--primary); background: var(--primary); color: var(--on-primary); }
-    button.submit { align-self: flex-start; }
-    .msg form[aria-disabled="true"] { opacity: .5; pointer-events: none; }
-    .reason { margin-top: 8px; font-size: 12px; color: var(--muted); }
-    .skipped, .empty { align-self: center; font-size: 12px; color: var(--muted); }
-    .status { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px; font-size: 12px; color: var(--muted); }
-    .status:has(span:empty) { display: none; }
-    .status svg { display: none; animation: spin 1s linear infinite; }
-    .status.busy svg { display: block; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .hint { padding: 0 12px 10px; font-size: 12px; color: var(--muted); font-style: italic; }
-    .hint:empty { display: none; }
-    .compose { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-top: 1px solid var(--panel-line); flex-shrink: 0; }
-    textarea {
-      resize: none; padding: 10px 12px; border-radius: 8px; font-size: 14px;
-      border: 1px solid var(--field-line); background: var(--field); color: var(--fg);
-    }
-    .send { height: 38px; border: 0; border-radius: 8px; background: var(--primary); color: var(--on-primary); font-size: 13px; font-weight: 600; }
-    .send:disabled { background: var(--tonal); color: var(--faint); cursor: default; }
-
-    .thread { flex-shrink: 0; border-radius: 12px; background: var(--card); box-shadow: var(--card-shadow); }
-    .thread summary { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; }
-    .thread summary::-webkit-details-marker { display: none; }
-    .thread .initial {
-      width: 28px; height: 28px; border-radius: 8px; background: var(--own); color: var(--you);
-      display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
-    }
-    .thread .who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-    .thread .name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .thread .where { font-size: 11px; color: var(--muted); }
-    .thread summary svg { color: var(--muted); transform: rotate(180deg); }
-    .thread:not([open]) summary svg { transform: none; }
-    .thread .entries { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 8px; }
-    .msg.student { align-self: flex-start; max-width: 88%; border-radius: 12px 12px 12px 4px; background: var(--tonal); white-space: pre-wrap; }
-    .msg.tutor { align-self: flex-end; max-width: 88%; border-radius: 12px 12px 4px 12px; background: var(--own); }
-    .msg .meta { display: block; font-size: 11px; color: var(--muted); white-space: normal; }
-    .msg.tutor .meta { font-weight: 600; color: var(--you); }
-
-    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-
-    @media (max-width: 599px) {
-      .panel { inset: 0; width: auto; height: auto; border-radius: 0; }
-      .toggle[aria-expanded="true"] { display: none; }
-      .icon-btn { width: 44px; height: 44px; }
-    }
-  `
-
   // sparkles, not the robot: that one is the students' tutor
   const SPARKLES = '<svg class="sparkles" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6c.7 4 2.6 6 7 7-4.4 1-6.3 3-7 7-.7-4-2.6-6-7-7 4.4-1 6.3-3 7-7zM18 2.5v5M15.5 5h5"></path></svg>'
   const CHEVRON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>'
@@ -246,8 +29,8 @@
   const host = document.createElement('edrys-dev-chat')
   const root = host.attachShadow({ mode: 'open' })
   root.innerHTML = `
-    <style>${css}</style>
-    <div class="wrap">
+    <link rel="stylesheet" href="/edrys-dev/panel.css">
+    <div class="wrap" hidden>
       <button class="toggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Agent chat">
         ${SPARKLES}<span class="chevron">${CHEVRON}</span><span class="dot"></span>
       </button>
@@ -308,8 +91,11 @@
 
   document.documentElement.appendChild(host)
 
-  // the shadows differ between edrys-Lite's themes, the colors follow by themselves
+  // shown once panel.css is there, not unstyled over the page before
   const wrap = root.querySelector('.wrap')
+  root.querySelector('link').addEventListener('load', () => (wrap.hidden = false))
+
+  // the shadows differ between edrys-Lite's themes, the colors follow by themselves
   const followTheme = () => wrap.classList.toggle('dark', document.documentElement.dataset.theme === 'dark')
   new MutationObserver(followTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   followTheme()
