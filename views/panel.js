@@ -83,7 +83,7 @@
       border: 1px solid var(--field-line); background: var(--field); color: var(--fg-2);
       box-shadow: 0 6px 16px rgba(20,25,35,.15);
     }
-    .toggle[aria-expanded="true"] .robot { display: none; }
+    .toggle[aria-expanded="true"] .sparkles { display: none; }
     .toggle[aria-expanded="true"] .chevron { display: block; }
 
     .panel {
@@ -237,7 +237,8 @@
     }
   `
 
-  const ROBOT = '<svg class="robot" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="8" width="14" height="11" rx="3"></rect><path d="M12 4v4M9.5 13v1M14.5 13v1"></path></svg>'
+  // sparkles, not the robot: that one is the students' tutor
+  const SPARKLES = '<svg class="sparkles" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6c.7 4 2.6 6 7 7-4.4 1-6.3 3-7 7-.7-4-2.6-6-7-7 4.4-1 6.3-3 7-7zM18 2.5v5M15.5 5h5"></path></svg>'
   const CHEVRON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>'
   const WARN = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20zM12 10v4M12 17h.01"></path></svg>'
   const ERROR = (size) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16h.01"></path></svg>`
@@ -248,7 +249,7 @@
     <style>${css}</style>
     <div class="wrap">
       <button class="toggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Agent chat">
-        ${ROBOT}<span class="chevron">${CHEVRON}</span><span class="dot"></span>
+        ${SPARKLES}<span class="chevron">${CHEVRON}</span><span class="dot"></span>
       </button>
       <section class="panel" id="panel" aria-label="edrys-dev">
         <header>
