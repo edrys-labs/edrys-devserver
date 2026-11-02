@@ -228,22 +228,26 @@ flowchart LR
   mods[modules/] -- watch --> msrv["module server :3211<br/>(module pages + error script)"]
   subgraph srv ["edrys-dev :3210"]
     direction TB
-    static["edrys-Lite dist + panel.js"]
-    api["/edrys-dev/lab · events · reload · bridge · module-error"]
+    static["edrys-Lite dist + panel.js, panel.css"]
+    api["/edrys-dev/lab · events · reload · bridge · module-error<br/>chat · tutor · link"]
   end
-  srv -- "reload-lab, reload-module (SSE events)" --> tab["class tab /?dev"]
-  tab -- "GET lab, republish signed" --> room((class))
-  tab -- "state, messages, replies (POST bridge)" --> srv
+  srv -- "reload-lab, reload-module, tutor answers (SSE events)" --> tab["class tab /?dev"]
+  tab -- "GET lab, republish signed, tutor answers" --> room((class))
+  tab -- "state, messages, replies, tutor questions (POST bridge)" --> srv
   msrv -- module frames --> tab
   msrv -. "errors (POST module-error)" .-> srv
   srv -- "reload (SSE)" --> peers
   room -- "default transport, or --local on :3210" --> peers[student / station tabs]
+  peers -- "tutor questions" --> room
+  room -- "tutor questions" --> tab
   agent[AI agent] <-- "MCP over stdio (--mcp)" --> srv
+  srv <-- "question in, answer out (--tutor)" --> tutor["tutor: claude or codex<br/>without tools"]
 ```
 
 - `index.ts` reads the options and starts the server, and with `--mcp` the MCP server (`mcp.ts`).
 - `server.ts` serves edrys-Lite, watches the lab (`watch.ts`) and talks to the class tab: events go out over SSE, the tab's reports come back over `POST /edrys-dev/bridge`.
-- In the class tab, edrys-Lite's own `DevBridge` (`src/ts/DevBridge.ts` in edrys-Lite, active with `?dev`) loads and republishes the lab and reports the class. edrys-dev adds `views/panel.js` to the page: the agent chat (`chat.ts` on the server), and in student and station tabs the reload on module changes.
+- In the class tab, edrys-Lite's own `DevBridge` (`src/ts/DevBridge.ts` in edrys-Lite, active with `?dev`) loads and republishes the lab and reports the class. edrys-dev adds `views/panel.js` to the page (its look in `views/panel.css`): the agent chat (`chat.ts` on the server) and the Students view of the tutor, and in student and station tabs the reload on module changes.
+- `tutor.ts` answers students with `--tutor`: the class tab passes their questions on over the bridge, `tutor.ts` runs `claude` or `codex` without tools for each one, and the answer goes back to the tab as an event, which sends it to the student through the class.
 - `modules.ts` serves local modules on the next port and adds the error reporter to their pages.
 - `sync.ts` is the Yjs sync for `--local`, on edrys-dev's own port.
 
