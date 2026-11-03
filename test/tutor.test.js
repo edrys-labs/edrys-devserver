@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Tutor, tutorPrompt, stateText, STATE_MAX } from '../dist/tutor.js'
+import { Tutor, tutorPrompt, tutorAuth, stateText, STATE_MAX } from '../dist/tutor.js'
 import { startDevServer } from '../dist/server.js'
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edrys-dev-tutor-'))
@@ -82,6 +82,29 @@ test('a question runs claude without tools, through stdin; the next one resumes 
   const again = new Tutor({ folder: path.dirname(path.dirname(arg(first, '--system-prompt-file'))), lab, command: fake })
   assert.equal(again.thread('key-a').session, session)
   assert.equal(again.threadsList().length, 1)
+})
+
+test('with ANTHROPIC_API_KEY claude runs --bare, so the key pays and not the signed-in account', async () => {
+  const saved = process.env.ANTHROPIC_API_KEY
+  try {
+    delete process.env.ANTHROPIC_API_KEY
+    await ask(tutor(), 'key-a', 'one')
+    assert.ok(!readCalls()[0].args.includes('--bare'))
+
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    await ask(tutor(), 'key-a', 'two')
+    assert.ok(readCalls()[0].args.includes('--bare'))
+  } finally {
+    if (saved === undefined) delete process.env.ANTHROPIC_API_KEY
+    else process.env.ANTHROPIC_API_KEY = saved
+  }
+})
+
+test('tutorAuth tells what pays for the answers', () => {
+  assert.equal(tutorAuth('claude', {}), 'the account claude is signed in to')
+  assert.equal(tutorAuth('claude', { ANTHROPIC_API_KEY: 'x' }), 'API key from ANTHROPIC_API_KEY')
+  assert.equal(tutorAuth('codex', { ANTHROPIC_API_KEY: 'x' }), 'the account codex is signed in to')
+  assert.equal(tutorAuth('codex', { CODEX_API_KEY: 'x' }), 'API key from CODEX_API_KEY')
 })
 
 test('students have their own sessions; a name cannot add lines to the prompt', async () => {

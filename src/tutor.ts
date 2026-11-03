@@ -79,6 +79,15 @@ const CODEX_CONFIG = [
   'include_collaboration_mode_instructions=false',
   'include_apps_instructions=false',
 ]
+/**
+ * What the tutor's answers are paid with: an API key in the environment, or
+ * the account the agent CLI is signed in to.
+ */
+export function tutorAuth(agent: TutorAgent = 'claude', env: NodeJS.ProcessEnv = process.env): string {
+  if (agent === 'codex') return env.CODEX_API_KEY ? 'API key from CODEX_API_KEY' : 'the account codex is signed in to'
+  return env.ANTHROPIC_API_KEY ? 'API key from ANTHROPIC_API_KEY' : 'the account claude is signed in to'
+}
+
 // what a codex --json run may report; anything else is a tool it used
 const CODEX_ITEMS = ['agent_message', 'reasoning', 'error']
 
@@ -370,6 +379,9 @@ export class Tutor extends EventEmitter {
     const id = session ?? crypto.randomUUID()
     const { code, out, err } = await this.spawn([
       '-p',
+      // signed in, claude -p answers with that account and passes over ANTHROPIC_API_KEY;
+      // --bare takes strictly the key (checked with Claude Code 2.1.316)
+      ...(process.env.ANTHROPIC_API_KEY ? ['--bare'] : []),
       '--tools', '',
       '--strict-mcp-config',
       '--setting-sources', '',

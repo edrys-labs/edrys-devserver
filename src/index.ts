@@ -7,7 +7,7 @@ import { startDevServer, type Report } from './server.js'
 import { startMcp, studentLink, localUrls } from './mcp.js'
 import { reachable } from './origin.js'
 import { readSaved } from './watch.js'
-import { CLASS_PER_HOUR, TUTOR_AGENTS, type TutorAgent } from './tutor.js'
+import { CLASS_PER_HOUR, TUTOR_AGENTS, tutorAuth, type TutorAgent } from './tutor.js'
 
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
@@ -183,7 +183,9 @@ const host = ['127.0.0.1', '0.0.0.0', '::'].includes(values.host) ? 'localhost' 
 const url = `http://${host}:${server.port}/?dev`
 
 say(`edrys-dev: ${lab}\n  ${url}`)
-if (server.tutor) say(`tutor: on (${tutorAgent}), notes for it in ${path.join(path.dirname(lab), 'tutor.md')}`)
+if (server.tutor) {
+  say(`tutor: on (${tutorAgent}, answers paid with ${tutorAuth(tutorAgent)}), notes for it in ${path.join(path.dirname(lab), 'tutor.md')}`)
+}
 if (server.modules) say(`modules: ${server.modules.dir}\n  ${server.modules.url}<name>/...`)
 if (reachable(values.host)) {
   console.error(

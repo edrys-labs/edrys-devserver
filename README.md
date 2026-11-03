@@ -175,7 +175,14 @@ Start edrys-dev with `--tutor`, and your students get a tutor button (robot icon
 - **You watch and switch it in the panel.** The round chat button at the bottom right of your `/?dev` tab has a Students view: every question and answer as it happens, and a switch that turns the tutor off and on without restarting. While it is off, students don't see their button.
 - **Each student has their own conversation**, which continues with the next question. Chats are saved in `.edrys-dev/tutor/`, and the agent keeps its own copy of each conversation (Claude Code and Codex in their usual session folders). Your agent can read them with `read_student_chats` and tell you where students get stuck.
 - **Limits.** At most two answers are written at once; a question that finds no free turn within 30 seconds gets "the tutor is busy". Each student can have one open question and up to 20 questions an hour, of up to 2000 characters each. The whole class gets up to 200 questions an hour, not counting those turned away as busy (`--tutor-per-hour` changes it), so a student cannot get past the limits with new names and use up your account. When the class reaches it, the terminal and the Students view say so.
-- **Cost.** Each question uses your Claude or OpenAI account. `--tutor-model` picks a cheaper model, e.g. `--tutor-model haiku`. Check whether your plan's terms allow answering students with it, or use an API key.
+- **Cost.** Each question uses the account `claude` or `codex` is signed in to. Answering students with a personal plan (Claude Pro/Max, ChatGPT) may break its terms, which don't let you make your account available to others. For a class, use an API key: start edrys-dev with it, and only the tutor uses it, not your own agent.
+
+  ```bash
+  ANTHROPIC_API_KEY=sk-ant-... npx edrys-dev lab.yml --tutor
+  CODEX_API_KEY=sk-...         npx edrys-dev lab.yml --tutor --tutor-agent codex
+  ```
+
+  The terminal says what pays when edrys-dev starts, e.g. `tutor: on (claude, answers paid with API key from ANTHROPIC_API_KEY)`. With a key, claude runs in its minimal mode (`--bare`), which takes only the key and never your login. Codex reads `CODEX_API_KEY`, not `OPENAI_API_KEY`. `--tutor-model` picks a cheaper model, e.g. `--tutor-model haiku`.
 - **Privacy.** Students are told that an AI on your computer answers and that you can read the chat. Questions and answers are encrypted between the student's browser and your tab, on every connection. Other members of the class can't read them, and neither can a WebSocket server that relays the class.
 
 ## Options
