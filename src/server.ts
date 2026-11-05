@@ -9,7 +9,8 @@ import { unpack } from 'msgpackr'
 import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
-import { Chat, explain, panelFiles, panelScript } from './chat.js'
+import { fileURLToPath } from 'node:url'
+import { Chat, explain } from './chat.js'
 import { STATE_MS, Tutor, threadId, type TutorOptions } from './tutor.js'
 import { localUrls, studentLink } from './mcp.js'
 
@@ -113,6 +114,9 @@ const TUTOR_THREADS = 50
 const TUTOR_ENTRIES = 50
 
 /** The built edrys-Lite this package serves. */
+// reloads student and station tabs of this machine when a local module changed
+const RELOAD_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'views', 'reload.js')
+
 export function edrysDist(): string {
   const require = createRequire(import.meta.url)
   return path.join(path.dirname(require.resolve('@edryslabs/edrys-lite/package.json')), 'dist')
@@ -330,10 +334,12 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
   const chat = new Chat(folder, SETTLE_MS)
   // without an agent, nobody would answer
   if (options.agent) chat.routes(app)
-  panelFiles(app)
 
-  // edrys-Lite's page, with panel.js (the chat shows only in the class tab)
-  // the link for students in the chat panel: the teacher may see neither the
+  // dotfiles: sendFile checks the whole absolute path, and installs often
+  // live under one (~/.nvm, ~/.npm/_npx); the path is ours, not the request's
+  app.get('/edrys-dev/reload.js', (req, res) => res.sendFile(RELOAD_SCRIPT, { dotfiles: 'allow' }))
+
+  // the link for students in the agent chat: the teacher may see neither the
   // terminal nor the agent. Again when the class opens and when the lab changes.
   const linkWatchers = new Set<express.Response>()
   const linkState = async () => ({
@@ -357,9 +363,10 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
     req.on('close', () => linkWatchers.delete(res))
   })
 
+  // edrys-Lite's page, with reload.js for the student and station tabs
   app.get(['/', '/index.html'], async (req, res) => {
     const page = await fs.readFile(path.join(edrysDist(), 'index.html'), 'utf8')
-    res.type('html').send(page + panelScript(!!options.agent, !!tutor))
+    res.type('html').send(page + '<script src="/edrys-dev/reload.js" defer></script>')
   })
 
   app.use(express.static(edrysDist()))

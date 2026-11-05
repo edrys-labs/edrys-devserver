@@ -261,12 +261,8 @@ async function base() {
   return new URL(value.url).origin
 }
 
-test('the page carries the chat panel', async () => {
-  const page = await (await fetch((await base()) + '/?dev')).text()
-  assert.match(page, /<script src="\/edrys-dev\/panel\.js" defer data-chat><\/script>$/)
-  for (const file of ['panel.js', 'panel.css', 'marked.js', 'purify.js']) {
-    assert.equal((await fetch(`${await base()}/edrys-dev/${file}`)).status, 200, file)
-  }
+test('the class tab learns that it has the agent chat', async () => {
+  assert.deepEqual((await (await fetch((await base()) + '/edrys-dev/lab')).json()).chat, { agent: true, students: false })
 })
 
 test('chat needs the panel', async () => {

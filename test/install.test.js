@@ -15,7 +15,7 @@ after(() => {
   fs.rmSync(dir, { recursive: true })
 })
 
-test('serves the chat panel from an install in a hidden folder', async () => {
+test('serves reload.js from an install in a hidden folder', async () => {
   fs.mkdirSync(pkg, { recursive: true })
   for (const entry of ['dist', 'views', 'package.json']) {
     fs.cpSync(entry, path.join(pkg, entry), { recursive: true })
@@ -27,7 +27,5 @@ test('serves the chat panel from an install in a hidden folder', async () => {
   server = spawn(process.execPath, [path.join(pkg, 'dist', 'index.js'), lab, '-p', '3300'], { stdio: ['ignore', 'pipe', 'pipe'] })
   await new Promise((resolve) => server.stdout.once('data', resolve))
 
-  for (const file of ['panel.js', 'panel.css', 'marked.js', 'purify.js']) {
-    assert.equal((await fetch(`http://127.0.0.1:3300/edrys-dev/${file}`)).status, 200, file)
-  }
+  assert.equal((await fetch('http://127.0.0.1:3300/edrys-dev/reload.js')).status, 200)
 })

@@ -3,8 +3,6 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { sameOrigin } from './origin.js'
 
@@ -464,34 +462,4 @@ export class Chat extends EventEmitter {
       console.error('edrys-dev: could not save the chat:', error.message)
     }
   }
-}
-
-const require = createRequire(import.meta.url)
-const views = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'views')
-
-// browser builds that set window.marked and window.DOMPurify
-const PANEL_FILES: Record<string, () => string> = {
-  'panel.js': () => path.join(views, 'panel.js'),
-  'panel.css': () => path.join(views, 'panel.css'),
-  'marked.js': () => path.join(path.dirname(require.resolve('marked/package.json')), 'lib', 'marked.umd.js'),
-  'purify.js': () => require.resolve('dompurify/purify.min.js'),
-}
-
-/** Serves panel.js and the libraries its chat uses. */
-export function panelFiles(app: express.Express) {
-  for (const [file, source] of Object.entries(PANEL_FILES)) {
-    // dotfiles: sendFile checks the whole absolute path, and installs often
-    // live under one (~/.nvm, ~/.npm/_npx); the path is ours, not the request's
-    app.get('/edrys-dev/' + file, (req, res) => res.sendFile(source(), { dotfiles: 'allow' }))
-  }
-}
-
-/**
- * The script tag that brings panel.js into the edrys-Lite page: it reloads
- * student and station tabs when a local module changed, and in the class tab
- * shows the chat with `chat` (an agent is connected) and the students' tutor
- * threads with `tutor`.
- */
-export function panelScript(chat: boolean, tutor = false): string {
-  return `<script src="/edrys-dev/panel.js" defer${chat ? ' data-chat' : ''}${tutor ? ' data-tutor' : ''}></script>`
 }

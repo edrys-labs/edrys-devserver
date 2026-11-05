@@ -32,11 +32,12 @@ test('serves edrys-Lite', async () => {
   assert.match(await response.text(), /<html/i)
 })
 
-test('without an agent: panel.js reloads other tabs, but there is no chat', async () => {
+test('without an agent: reload.js reloads other tabs, but there is no chat', async () => {
   const page = await (await fetch(base + '/?dev')).text()
-  assert.match(page, /<script src="\/edrys-dev\/panel\.js" defer><\/script>$/)
-  assert.equal((await fetch(base + '/edrys-dev/panel.js')).status, 200)
+  assert.match(page, /<script src="\/edrys-dev\/reload\.js" defer><\/script>$/)
+  assert.equal((await fetch(base + '/edrys-dev/reload.js')).status, 200)
   assert.equal((await fetch(base + '/edrys-dev/chat/events')).status, 404)
+  assert.deepEqual((await (await fetch(base + '/edrys-dev/lab')).json()).chat, { agent: false, students: false })
 })
 
 test('hands out the lab, leaving its transport alone', async () => {

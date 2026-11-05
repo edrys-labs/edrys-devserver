@@ -470,7 +470,7 @@ test('the chat panel shows the threads live and switches the tutor off and on', 
   const origin = `http://localhost:${server.port}`
   const controller = new AbortController()
   try {
-    assert.match(await (await fetch(origin + '/')).text(), /<script src="\/edrys-dev\/panel\.js" defer data-tutor><\/script>$/)
+    assert.deepEqual((await (await fetch(origin + '/edrys-dev/lab')).json()).chat, { agent: false, students: true })
     const panel = eventsOf(await fetch(origin + '/edrys-dev/tutor/events', { signal: controller.signal }))
     const tab = eventsOf(await fetch(origin + '/edrys-dev/events', { signal: controller.signal }))
     assert.deepEqual(await panel(), { event: 'message', data: { type: 'threads', on: true, threads: [] } })
