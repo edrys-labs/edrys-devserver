@@ -4,12 +4,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import { unpack } from 'msgpackr'
 import { readSaved, watchFile, watchModules } from './watch.js'
 import { moduleApp } from './modules.js'
 import { hostGuard, hostNames, sameOrigin } from './origin.js'
-import { fileURLToPath } from 'node:url'
 import { Chat, explain } from './chat.js'
 import { STATE_MS, Tutor, threadId, type TutorOptions } from './tutor.js'
 import { localUrls, studentLink } from './mcp.js'
@@ -113,10 +113,10 @@ const SETTLE_MS = 2000
 const TUTOR_THREADS = 50
 const TUTOR_ENTRIES = 50
 
-/** The built edrys-Lite this package serves. */
 // reloads student and station tabs of this machine when a local module changed
 const RELOAD_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'views', 'reload.js')
 
+/** The built edrys-Lite this package serves. */
 export function edrysDist(): string {
   const require = createRequire(import.meta.url)
   return path.join(path.dirname(require.resolve('@edryslabs/edrys-lite/package.json')), 'dist')
