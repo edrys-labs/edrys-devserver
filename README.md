@@ -261,6 +261,8 @@ flowchart LR
 
 edrys-Lite comes from npm as [`@edryslabs/edrys-lite`](https://www.npmjs.com/package/@edryslabs/edrys-lite), pinned to one version: its `dist/` is what edrys-dev serves. To try changes to edrys-Lite, build it (`npm run build` there) and link the checkout with `npm install ../edrys-Lite`; pin the published version again afterwards. The same goes for [`@edryslabs/websocket-server`](https://www.npmjs.com/package/@edryslabs/websocket-server), an optional dependency that only `--local` uses.
 
+Releases are published by [`.github/workflows/publish.yml`](.github/workflows/publish.yml): `npm version <version>` and `git push --follow-tags` on `main`. The workflow checks that the tag matches `package.json`, runs the tests, publishes to npm (a pre-release version like `0.5.0-dev.0` under the `next` tag, any other under `latest`) and creates the GitHub release.
+
 Issues and pull requests: https://github.com/edrys-labs/edrys-devserver
 
 ## License
