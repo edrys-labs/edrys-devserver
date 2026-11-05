@@ -156,6 +156,8 @@ export async function startDevServer(options: DevServerOptions): Promise<DevServ
       text: await readSaved(options.lab),
       // the class tab announces it to the students
       tutor: !!tutor?.enabled,
+      // the views of edrys-Lite's agent chat in the class tab
+      chat: { agent: !!options.agent, students: !!tutor },
       // the class tab's own links for students go there; null: they cannot (--local)
       studentSite: options.studentSite ?? null,
       // Without it the class keeps its own (or edrys-Lite's default) transport.
