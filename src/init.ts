@@ -24,7 +24,7 @@ modules:
       content: |
         # Welcome
 
-        Open the agent chat (round button, bottom right) and tell the agent what this lab should do.
+        Open the agent chat (sparkles button in the top bar) and tell the agent what this lab should do.
     width: full
     height: tall
 `
@@ -130,7 +130,7 @@ Your lab is ready in ${dir}
 
 Next: open this folder in your AI agent (Claude Code, or VS Code with Copilot)
 and write "start". The agent starts edrys-dev and opens the class in your
-browser; from then on you can talk to it in the agent chat there (round button, bottom right).`)
+browser; from then on you can talk to it in the agent chat there (sparkles button in the top bar).`)
   if (extra.includes('--tutor')) {
     say(`
 Your students get a tutor chat in the class, answered by the AI on this
