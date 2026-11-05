@@ -19,6 +19,11 @@
 
   const OPEN_KEY = 'edrys-dev:chat-open'
   const VIEW_KEY = 'edrys-dev:chat-view'
+  const WIDTH_KEY = 'edrys-dev:chat-width'
+  const WIDTH = 400
+  const MIN_WIDTH = 320
+  // the class keeps at least this much of the window
+  const PAGE_MIN = 360
 
   // sparkles, not the robot: that one is the students' tutor
   const SPARKLES = '<svg class="sparkles" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 6c.7 4 2.6 6 7 7-4.4 1-6.3 3-7 7-.7-4-2.6-6-7-7 4.4-1 6.3-3 7-7zM18 2.5v5M15.5 5h5"></path></svg>'
@@ -32,9 +37,10 @@
     <link rel="stylesheet" href="/edrys-dev/panel.css">
     <div class="wrap" hidden>
       <button class="toggle" type="button" aria-expanded="false" aria-controls="panel" aria-label="Agent chat">
-        ${SPARKLES}<span class="chevron">${CHEVRON}</span><span class="dot"></span>
+        ${SPARKLES}<span class="dot"></span>
       </button>
       <section class="panel" id="panel" aria-label="edrys-dev">
+        <div class="resize" role="separator" aria-orientation="vertical" aria-label="Panel width" aria-valuemin="320" tabindex="0" title="Drag to resize, double-click to reset"></div>
         <header>
           <div class="tabs" role="tablist" aria-label="View">
             <button type="button" role="tab" data-view="agent" aria-controls="agent">Agent</button>
@@ -90,6 +96,24 @@
     </div>`
 
   document.documentElement.appendChild(host)
+
+  // docked on the right like edrys-Lite's chats: <body> gets narrower by the
+  // panel's width, and its transform makes it the box edrys-Lite's fixed
+  // parts (app bar, drawers, dialogs) are placed in; as a scroll box (with
+  // no bar) it is also the one Vuetify keeps its menus within. Phones get the
+  // panel full screen over the page
+  const pageStyle = document.createElement('style')
+  pageStyle.textContent = `
+    @media (min-width: 600px) {
+      html.edrys-dev-docked body {
+        width: calc(100% - var(--edrys-dev-chat)) !important; transform: translateZ(0);
+        overflow-y: scroll; scrollbar-width: none;
+      }
+      html.edrys-dev-docked body::-webkit-scrollbar { display: none; }
+    }
+    html.edrys-dev-resizing, html.edrys-dev-resizing * { cursor: col-resize !important; user-select: none !important; }
+    html.edrys-dev-resizing iframe { pointer-events: none; }`
+  document.head.appendChild(pageStyle)
 
   // shown once panel.css is there, not unstyled over the page before
   const wrap = root.querySelector('.wrap')
@@ -193,8 +217,56 @@
     } else if (menu.value === NEW) showMenu()
   })
 
+  // the width the user dragged to, kept within the window by fit()
+  const resizer = root.querySelector('.resize')
+  let wanted = WIDTH
+  try {
+    wanted = Number(localStorage.getItem(WIDTH_KEY)) || WIDTH
+  } catch {}
+  function fit() {
+    const width = Math.round(Math.max(MIN_WIDTH, Math.min(wanted, innerWidth - PAGE_MIN)))
+    document.documentElement.style.setProperty('--edrys-dev-chat', width + 'px')
+    resizer.setAttribute('aria-valuenow', String(width))
+    return width
+  }
+  function setWidth(width) {
+    wanted = width
+    wanted = fit()
+    try {
+      localStorage.setItem(WIDTH_KEY, String(wanted))
+    } catch {}
+  }
+  addEventListener('resize', fit)
+  fit()
+
+  resizer.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    resizer.setPointerCapture(event.pointerId)
+    resizer.classList.add('dragging')
+    document.documentElement.classList.add('edrys-dev-resizing')
+  })
+  resizer.addEventListener('pointermove', (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return
+    wanted = innerWidth - event.clientX
+    fit()
+  })
+  resizer.addEventListener('lostpointercapture', () => {
+    resizer.classList.remove('dragging')
+    document.documentElement.classList.remove('edrys-dev-resizing')
+    setWidth(wanted)
+  })
+  resizer.addEventListener('dblclick', () => setWidth(WIDTH))
+  resizer.addEventListener('keydown', (event) => {
+    const step = { ArrowLeft: 16, ArrowRight: -16 }[event.key]
+    if (!step) return
+    event.preventDefault()
+    setWidth(fit() + step)
+  })
+
   function setOpen(isOpen) {
     panel.classList.toggle('open', isOpen)
+    document.documentElement.classList.toggle('edrys-dev-docked', isOpen)
     toggle.setAttribute('aria-expanded', String(isOpen))
     if (isOpen) toggle.classList.remove('unread')
     if (isOpen && view === 'students') count.textContent = ''
@@ -202,6 +274,28 @@
       sessionStorage.setItem(OPEN_KEY, isOpen ? '1' : '')
     } catch {}
   }
+  // the button stays in the class's corner, left of the drawers edrys-Lite
+  // opens on the right (class chat, tutor), which Vuetify gives v-main as
+  // --v-layout-right; checked once a frame at most, on any change of a style
+  let placing = false
+  function placeToggle() {
+    if (placing) return
+    placing = true
+    requestAnimationFrame(() => {
+      placing = false
+      const main = document.querySelector('.v-main')
+      const right = main ? parseFloat(getComputedStyle(main).getPropertyValue('--v-layout-right')) || 0 : 0
+      toggle.style.setProperty('--drawers', right + 'px')
+    })
+  }
+  new MutationObserver(placeToggle).observe(document.documentElement, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['style'],
+  })
+  placeToggle()
+
   toggle.addEventListener('click', () => setOpen(!panel.classList.contains('open')))
   root.querySelector('.close').addEventListener('click', () => {
     setOpen(false)

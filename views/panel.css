@@ -31,13 +31,11 @@
   --link: rgb(var(--v-theme-link, 0,87,154));
   --msg-shadow: 0 1px 2px rgba(20,25,35,.06), 0 0 0 1px rgb(var(--v-theme-message-edge, 232,234,237));
   --card-shadow: 0 1px 2px rgba(20,25,35,.05), 0 0 0 1px var(--card-edge);
-  --pop-shadow: 0 12px 32px rgba(20,25,35,.14), 0 0 0 1px var(--card-edge);
   color: var(--fg);
 }
 .wrap.dark {
   --msg-shadow: none;
   --card-shadow: 0 0 0 1px rgb(var(--v-theme-module-line, 44,51,61));
-  --pop-shadow: 0 12px 32px rgba(0,0,0,.45), 0 0 0 1px rgb(var(--v-theme-line, 57,65,76));
 }
 svg { flex-shrink: 0; }
 [hidden] { display: none !important; }
@@ -45,7 +43,9 @@ button { font: inherit; cursor: pointer; }
 .mono { font-family: 'JetBrains Mono Variable', ui-monospace, monospace; }
 
 .toggle {
-  position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;
+  /* --drawers: what edrys-Lite's open right drawers take, set by panel.js */
+  position: fixed; right: calc(var(--drawers, 0px) + 16px); bottom: 16px; z-index: 2147483000;
+  transition: right .2s;
   width: 52px; height: 52px; border-radius: 50%; border: 0;
   background: var(--primary); color: var(--on-primary);
   display: flex; align-items: center; justify-content: center;
@@ -56,23 +56,24 @@ button { font: inherit; cursor: pointer; }
   border-radius: 50%; background: var(--badge); box-shadow: 0 0 0 2px var(--panel); display: none;
 }
 .toggle.unread .dot { display: block; }
-.toggle .chevron { display: none; }
-.toggle[aria-expanded="true"] {
-  border: 1px solid var(--field-line); background: var(--field); color: var(--fg-2);
-  box-shadow: 0 6px 16px rgba(20,25,35,.15);
-}
-.toggle[aria-expanded="true"] .sparkles { display: none; }
-.toggle[aria-expanded="true"] .chevron { display: block; }
+/* the header's close button closes the open panel */
+.toggle[aria-expanded="true"] { display: none; }
 
+/* docked on the right like edrys-Lite's class and tutor chats; panel.js
+   narrows the page by --edrys-dev-chat */
 .panel {
-  position: fixed; right: 16px; bottom: 80px; z-index: 2147483000;
-  width: min(400px, calc(100vw - 32px)); height: min(700px, calc(100vh - 100px));
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 2147483000;
+  width: var(--edrys-dev-chat, 400px);
   display: none; flex-direction: column; background: var(--panel);
-  border-radius: 16px; overflow: hidden; box-shadow: var(--pop-shadow);
+  border-left: 1px solid var(--panel-line);
 }
 .panel.open { display: flex; }
+.resize { position: absolute; top: 0; bottom: 0; left: -1px; z-index: 1; width: 6px; cursor: col-resize; touch-action: none; }
+.resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; transition: background .15s; }
+.resize:hover::after, .resize.dragging::after, .resize:focus-visible::after { background: var(--primary); }
+.resize:focus-visible { outline: none; }
 header {
-  display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 8px 0 12px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px 0 16px; flex-shrink: 0;
   border-bottom: 1px solid var(--panel-line);
 }
 .title { font-size: 14px; font-weight: 600; }
@@ -209,7 +210,7 @@ textarea {
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 @media (max-width: 599px) {
-  .panel { inset: 0; width: auto; height: auto; border-radius: 0; }
-  .toggle[aria-expanded="true"] { display: none; }
+  .panel { inset: 0; width: auto; border-left: 0; }
+  .resize { display: none; }
   .icon-btn { width: 44px; height: 44px; }
 }

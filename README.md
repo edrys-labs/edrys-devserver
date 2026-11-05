@@ -138,7 +138,7 @@ By hand:
 
 ### Talking to the agent from the class
 
-The class tab has a chat button (sparkles icon, bottom right). What you write there goes straight to the agent. Only you see this chat; it is not the class chat. The agent can answer with text and also with buttons or checkboxes for you to pick from.
+The class tab has a chat button (sparkles icon, bottom right). It opens the chat on the right side of the class, which makes room for it; drag its left edge to make it wider or narrower. What you write there goes straight to the agent. Only you see this chat; it is not the class chat. The agent can answer with text and also with buttons or checkboxes for you to pick from.
 
 When the class cannot take your lab file, for example after a typing mistake, a red note in the chat says so in plain words, with edrys-Lite's message under "Details". It goes away once the file loads again.
 
