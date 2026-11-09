@@ -89,12 +89,26 @@ test('localUrls finds what only this machine can load', () => {
   - url: "http://127.0.0.1:3211/editor/"
   - url: https://edrys-labs.github.io/module-markdown-it/index.html
   - url: http://localhost:3211/term/index.html
-config: {"x": "http://[::1]:8080/a"}`
+  - url: http://[::1]:8080/a`
   assert.deepEqual(localUrls(text), [
     'http://localhost:3211/term/index.html',
     'http://127.0.0.1:3211/editor/',
     'http://[::1]:8080/a',
   ])
+  assert.deepEqual(localUrls(JSON.stringify({ modules: [{ url: 'http://localhost:3211/a/' }] })), ['http://localhost:3211/a/'])
+})
+
+test('localUrls leaves out localhost in a module\'s config: that is the computer it runs on', () => {
+  const text = `modules:
+  - url: https://edrys-labs.github.io/module-pyxtermjs/index.html
+    stationConfig:
+      server: http://localhost:5000/pty
+    config:
+      url: http://localhost:8000/
+      content: |
+        url: http://localhost:3000/`
+  assert.deepEqual(localUrls(text), [])
+  assert.deepEqual(localUrls('modules: [{url: http://localhost:1/'), [])
 })
 
 test('movedUrls finds the folder\'s modules on another port, not other local servers', () => {

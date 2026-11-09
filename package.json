@@ -39,6 +39,7 @@
     "@edryslabs/edrys-lite": "3.2.0",
     "chokidar": "^4.0.3",
     "express": "^5.1.0",
+    "js-yaml": "^4.3.2",
     "msgpackr": "^2.1.2",
     "open": "^10.1.0"
   },
@@ -48,6 +49,7 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
     "typescript": "^5.7.0"
