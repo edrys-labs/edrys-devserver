@@ -1,18 +1,28 @@
 // edrys-dev init: a lab folder that an AI agent can start in, without writing
-// any config by hand. Files that exist are kept.
+// any config by hand. It works in a new folder and in one that already has a
+// lab (e.g. laboratory/micropython.yaml in a published lab repository): files
+// that exist are kept, and the edrys parts are added to them where it is safe.
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline/promises'
+import yaml from 'js-yaml'
+
+/** `lab`: the lab file, relative to the folder, with / */
+type Ctx = { name: string; extra: string[]; lab: string }
 
 // `extra`: more options for edrys-dev, e.g. --tutor
-const server = (extra: string[]) => ({ command: 'npx', args: ['-y', '@edryslabs/edrys-dev', '--mcp', 'lab.yml', ...extra] })
+const server = ({ extra, lab }: Ctx) => ({ command: 'npx', args: ['-y', '@edryslabs/edrys-dev', '--mcp', lab, ...extra] })
 
-const SETTINGS = {
+// edrys-dev serves the modules folder next to the lab
+const modulesDir = (lab: string) => (path.posix.dirname(lab) === '.' ? '' : path.posix.dirname(lab) + '/') + 'modules'
+
+// no prompts for the edrys server and for edits of the lab and its modules
+const settings = (lab: string) => ({
   enabledMcpjsonServers: ['edrys'],
-  permissions: { allow: ['mcp__edrys', 'Edit(/lab.yml)', 'Edit(/modules/**)'] },
-}
+  permissions: { allow: ['mcp__edrys', `Edit(/${lab})`, `Edit(/${modulesDir(lab)}/**)`] },
+})
 
 /** A lab with a welcome page; also what `--mcp` starts with when there is no lab file. */
 export const starterLab = (name: string) => `name: ${JSON.stringify(name)}
@@ -29,13 +39,14 @@ modules:
     height: tall
 `
 
-const agents = (name: string) => `# ${name}
+// also how an AGENTS.md from before is recognized as having this section
+const MARKER = 'edrys MCP server'
 
-This folder is an edrys-Lite lab: \`lab.yml\` is the classroom configuration, \`modules/\` (if there) holds modules written for it. The user works in the class in their browser and talks to you through the chat there; they may not look at this session.
+const agentsBody = (lab: string) => `This folder is an edrys-Lite lab: \`${lab}\` is the classroom configuration, \`${modulesDir(lab)}/\` (if there) holds modules written for it. Keep the lab file where it is and under its name: deploy links and imports may point to it. The user works in the class in their browser and talks to you through the chat there; they may not look at this session.
 
 When a session starts:
 
-1. Call \`get_state\` of the edrys MCP server. If \`connected\` is false, open its \`url\` in the browser (browser automation or the system's open command), or tell the user the address.
+1. Call \`get_state\` of the ${MARKER}. If \`connected\` is false, open its \`url\` in the browser (browser automation or the system's open command), or tell the user the address.
 2. If \`messages\` is above 0, call \`read_chat\` and pick up where the chat left off.
 3. Serve the chat until the user says stop: answer every chat event with the \`chat\` tool, as the edrys server's instructions say.
 
@@ -46,16 +57,165 @@ When they want to share the class or ask how students join, give them \`get_stat
 If the edrys-lab and edrys-module skills are installed, use them to write the lab and its modules.
 `
 
-const FILES: [string, (name: string, extra: string[]) => string][] = [
-  ['lab.yml', starterLab],
-  ['.mcp.json', (_, extra) => JSON.stringify({ mcpServers: { edrys: server(extra) } }, null, 2) + '\n'],
-  ['.vscode/mcp.json', (_, extra) => JSON.stringify({ servers: { edrys: { type: 'stdio', ...server(extra) } } }, null, 2) + '\n'],
-  ['AGENTS.md', agents],
+const isObject = (value: unknown): value is Record<string, any> => !!value && typeof value === 'object' && !Array.isArray(value)
+
+/** What to do with a file that is there: new text to write and what to say, or only a note to the user. */
+type Merge = { text?: string; note?: string }
+
+/** `key`: where the servers are, mcpServers (Claude Code) or servers (VS Code) */
+const mergeServer = (key: string, entry: (ctx: Ctx) => object) => (text: string, ctx: Ctx): Merge => {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    // e.g. a VS Code mcp.json with comments, which we would lose
+    return { note: text.includes('edrys-dev') ? undefined : 'add the edrys server yourself, see the README' }
+  }
+  if (!isObject(data) || (data[key] !== undefined && !isObject(data[key]))) return { note: 'add the edrys server yourself, see the README' }
+  const edrys = data[key]?.edrys
+  if (!edrys) {
+    data[key] = { ...data[key], edrys: entry(ctx) }
+    return { text: JSON.stringify(data, null, 2) + '\n', note: 'added the edrys server' }
+  }
+  const args: unknown[] = Array.isArray(edrys.args) ? edrys.args : []
+  const notes = []
+  if (!args.includes(ctx.lab)) notes.push(`its edrys server starts another lab, put "${ctx.lab}" into its args yourself`)
+  if (ctx.extra.length && !args.includes(ctx.extra[0])) notes.push(`add ${ctx.extra.map((a) => `"${a}"`).join(', ')} to the args of edrys yourself`)
+  return { note: notes.join('; ') || undefined }
+}
+
+function mergeSettings(text: string, ctx: Ctx): Merge {
+  let data: unknown
+  try {
+    data = JSON.parse(text)
+  } catch {
+    return { note: 'not plain JSON, edrys-dev may ask before each edit' }
+  }
+  if (!isObject(data)) return { note: 'not a settings object, edrys-dev may ask before each edit' }
+  const want = settings(ctx.lab)
+  const servers = Array.isArray(data.enabledMcpjsonServers) ? data.enabledMcpjsonServers : []
+  const permissions = isObject(data.permissions) ? data.permissions : {}
+  const allow = Array.isArray(permissions.allow) ? permissions.allow : []
+  const addServers = want.enabledMcpjsonServers.filter((name) => !servers.includes(name))
+  const addAllow = want.permissions.allow.filter((rule) => !allow.includes(rule))
+  if (!addServers.length && !addAllow.length) return {}
+  // a project that turned off its .mcp.json servers would not start edrys either
+  if (data.enableAllProjectMcpServers !== true) data.enabledMcpjsonServers = [...servers, ...addServers]
+  data.permissions = { ...permissions, allow: [...allow, ...addAllow] }
+  return { text: JSON.stringify(data, null, 2) + '\n', note: 'added the edrys permissions' }
+}
+
+const FILES: { file: string; create: (ctx: Ctx) => string; merge: (text: string, ctx: Ctx) => Merge }[] = [
+  {
+    file: '.mcp.json',
+    create: (ctx) => JSON.stringify({ mcpServers: { edrys: server(ctx) } }, null, 2) + '\n',
+    merge: mergeServer('mcpServers', server),
+  },
+  {
+    file: '.vscode/mcp.json',
+    create: (ctx) => JSON.stringify({ servers: { edrys: { type: 'stdio', ...server(ctx) } } }, null, 2) + '\n',
+    merge: mergeServer('servers', (ctx) => ({ type: 'stdio', ...server(ctx) })),
+  },
+  {
+    file: 'AGENTS.md',
+    create: ({ name, lab }) => `# ${name}\n\n${agentsBody(lab)}`,
+    merge: (text, { lab }) =>
+      text.includes(MARKER)
+        ? {}
+        : { text: text + (text === '' || text.endsWith('\n') ? '' : '\n') + `\n## edrys-Lite lab\n\n${agentsBody(lab)}`, note: 'added the edrys section' },
+  },
   // Claude Code reads CLAUDE.md, which imports AGENTS.md
-  ['CLAUDE.md', () => '@AGENTS.md\n'],
-  // no prompts for the edrys server and for edits of the lab and its modules
-  ['.claude/settings.json', () => JSON.stringify(SETTINGS, null, 2) + '\n'],
+  {
+    file: 'CLAUDE.md',
+    create: () => '@AGENTS.md\n',
+    merge: (text) =>
+      text.includes('@AGENTS.md')
+        ? {}
+        : { text: text + (text === '' || text.endsWith('\n') ? '' : '\n') + '\n@AGENTS.md\n', note: 'added @AGENTS.md' },
+  },
+  {
+    file: '.claude/settings.json',
+    create: ({ lab }) => JSON.stringify(settings(lab), null, 2) + '\n',
+    merge: mergeSettings,
+  },
 ]
+
+const LAB_FILE = /\.(ya?ml|json)$/i
+
+/** The config in `file` if it is an edrys lab, an object with a list of modules. */
+function readLab(file: string): Record<string, any> | null {
+  try {
+    if (fs.statSync(file).size > 2_000_000) return null
+    const text = fs.readFileSync(file, 'utf8')
+    const data = /\.json$/i.test(file) ? JSON.parse(text) : yaml.load(text)
+    return isObject(data) && Array.isArray(data.modules) ? data : null
+  } catch {
+    return null
+  }
+}
+
+// modules hold the lab's own modules, not labs
+const SKIP = new Set(['node_modules', 'modules', 'dist'])
+
+/** Labs in `dir` and two levels of folders below it, e.g. laboratory/micropython.yaml. */
+function findLabs(dir: string) {
+  const found: string[] = []
+  let budget = 1000 // started in a big folder by mistake, it does not read all of it
+  const walk = (folder: string, depth: number) => {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(folder, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (budget-- <= 0) return
+      if (entry.name.startsWith('.')) continue
+      const full = path.join(folder, entry.name)
+      if (entry.isDirectory()) {
+        if (depth < 2 && !SKIP.has(entry.name)) walk(full, depth + 1)
+      } else if (entry.isFile() && LAB_FILE.test(entry.name) && readLab(full)) found.push(full)
+    }
+  }
+  walk(dir, 0)
+  return found
+}
+
+const relative = (dir: string, file: string) => path.relative(dir, file).split(path.sep).join('/')
+
+/**
+ * The lab file to set up, relative to `dir`, or null for a new lab.yml.
+ * `given`: --lab, relative to the current folder.
+ */
+async function chooseLab(dir: string, given: string | undefined, say: (line: string) => void): Promise<string | null> {
+  if (given) {
+    const file = path.resolve(given)
+    const lab = relative(dir, file)
+    if (!fs.statSync(file, { throwIfNoEntry: false })?.isFile()) throw new Error(`no lab file at ${file}`)
+    if (lab.startsWith('../') || path.isAbsolute(lab)) throw new Error(`the lab must be in the folder ${dir}, not at ${file}`)
+    if (!LAB_FILE.test(file)) throw new Error(`the lab must be a YAML or JSON file, not ${lab}`)
+    if (!readLab(file)) throw new Error(`${lab} is not an edrys lab: it has no list of modules`)
+    return lab
+  }
+  if (fs.existsSync(path.join(dir, 'lab.yml'))) return 'lab.yml'
+
+  const labs = findLabs(dir).map((file) => relative(dir, file))
+  if (!labs.length) return null
+  if (labs.length === 1) {
+    if (!process.stdin.isTTY) {
+      say(`  found    ${labs[0]}, using it as the lab (pick another with --lab <file>)`)
+      return labs[0]
+    }
+    return /^(y|yes|)$/i.test(await ask(`Found the lab ${labs[0]}. Use it? (Y/n) `)) ? labs[0] : null
+  }
+  const list = labs.map((lab, i) => `  ${i + 1}. ${lab}`).join('\n')
+  if (!process.stdin.isTTY) throw new Error(`this folder has more than one lab:\n${list}\npick one with --lab <file>`)
+  say(`This folder has more than one lab:\n${list}`)
+  const answer = await ask(`Which one should the agent work on? (1-${labs.length}, or 0 for a new lab.yml) `)
+  const pick = Number(answer)
+  if (!Number.isInteger(pick) || pick < 0 || pick > labs.length) throw new Error(`no lab ${JSON.stringify(answer)}, pick one with --lab <file>`)
+  return pick === 0 ? null : labs[pick - 1]
+}
 
 // The edrys skills, for every lab of this user: in ~/.agents/skills, which
 // Copilot reads, linked into ~/.claude/skills. In the lab folder they would be
@@ -79,26 +239,48 @@ async function ask(question: string) {
   return answer
 }
 
-/** `extra`: options the agent starts edrys-dev with, e.g. ['--tutor']. */
-export async function init(folder: string, extra: string[] = [], say: (line: string) => void = console.log) {
+/**
+ * `extra`: options the agent starts edrys-dev with, e.g. ['--tutor'].
+ * `lab`: the lab file that is there (--lab); without it, init looks for one.
+ * Throws, before it writes anything, when it cannot tell which lab to use.
+ */
+export async function init(
+  folder: string,
+  extra: string[] = [],
+  say: (line: string) => void = console.log,
+  options: { lab?: string } = {}
+) {
   const dir = path.resolve(folder)
+  if (options.lab && !fs.existsSync(dir)) throw new Error(`no folder ${dir}`)
   fs.mkdirSync(dir, { recursive: true })
 
+  const found = await chooseLab(dir, options.lab, say)
+  const lab = found ?? 'lab.yml'
   let name = path.basename(dir)
-  if (process.stdin.isTTY && !fs.existsSync(path.join(dir, 'lab.yml'))) {
-    name = (await ask(`Name of your lab (${name}): `)) || name
+  if (found) {
+    const own = readLab(path.join(dir, found))?.name
+    if (typeof own === 'string' && own.trim()) name = own.trim()
+  } else {
+    if (process.stdin.isTTY) name = (await ask(`Name of your lab (${name}): `)) || name
+    fs.writeFileSync(path.join(dir, lab), starterLab(name))
+    say(`  created  ${lab}`)
   }
+  if (found) say(`  kept     ${lab} (already there)`)
 
-  for (const [file, content] of FILES) {
+  const ctx = { name, extra, lab }
+  for (const { file, create, merge } of FILES) {
     const target = path.join(dir, file)
-    if (fs.existsSync(target)) {
-      const missing = file.endsWith('mcp.json') && extra.length && !fs.readFileSync(target, 'utf8').includes(extra[0])
-      say(`  kept     ${file} (already there)` + (missing ? `: add ${extra.map((a) => `"${a}"`).join(', ')} to the args of edrys yourself` : ''))
+    if (!fs.existsSync(target)) {
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, create(ctx))
+      say(`  created  ${file}`)
       continue
     }
-    fs.mkdirSync(path.dirname(target), { recursive: true })
-    fs.writeFileSync(target, content(name, extra))
-    say(`  created  ${file}`)
+    const { text, note } = merge(fs.readFileSync(target, 'utf8'), ctx)
+    if (text !== undefined) {
+      fs.writeFileSync(target, text)
+      say(`  changed  ${file}: ${note}`)
+    } else say(`  kept     ${file} (already there)` + (note ? `: ${note}` : ''))
   }
 
   const ignore = path.join(dir, '.gitignore')
@@ -126,7 +308,7 @@ export async function init(folder: string, extra: string[] = [], say: (line: str
   }
 
   say(`
-Your lab is ready in ${dir}
+Your lab is ready in ${dir}${found ? `\nThe agent works on ${lab}.` : ''}
 
 Next: open this folder in your AI agent (Claude Code, or VS Code with Copilot)
 and write "start". The agent starts edrys-dev and opens the class in your
@@ -134,6 +316,6 @@ browser; from then on you can talk to it in the agent chat there (sparkles butto
   if (extra.includes('--tutor')) {
     say(`
 Your students get a tutor chat in the class, answered by the AI on this
-computer. Notes only for the tutor go into tutor.md in this folder.`)
+computer. Notes only for the tutor go into tutor.md in ${path.posix.dirname(lab) === '.' ? 'this folder' : `${path.posix.dirname(lab)}/`}.`)
   }
 }

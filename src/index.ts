@@ -12,9 +12,13 @@ import { CLASS_PER_HOUR, TUTOR_AGENTS, tutorAuth, type TutorAgent } from './tuto
 const HELP = `edrys-dev: develop an edrys-Lite lab locally
 
 Usage: edrys-dev [lab.yml] [options]
-       edrys-dev init [folder]   set up a new lab for an AI agent: lab.yml,
-                                 agent config and instructions; with
-                                 --tutor, the agent starts it with the tutor
+       edrys-dev init [folder]   set up a lab folder for an AI agent: agent
+                                 config and instructions, and lab.yml if
+                                 there is no lab yet; with --tutor, the
+                                 agent starts it with the tutor
+      --lab <file>    with init: the lab that is there, e.g.
+                      laboratory/micropython.yaml (default: the one
+                      init finds in the folder)
 
   -i, --input <file>  lab file (YAML or JSON), default ./lab.yml
   -p, --port <port>   port, default 3210 (the next free one if taken)
@@ -54,6 +58,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     input: { type: 'string', short: 'i' },
+    lab: { type: 'string' },
     port: { type: 'string', short: 'p', default: '3210' },
     host: { type: 'string', default: '127.0.0.1' },
     local: { type: 'boolean', default: false },
@@ -99,8 +104,17 @@ if (positionals[0] === 'init' && !values.input) {
         ...(classPerHour !== CLASS_PER_HOUR ? ['--tutor-per-hour', String(classPerHour)] : []),
       ]
     : []
-  await init(positionals[1] ?? '.', tutor)
+  try {
+    await init(positionals[1] ?? '.', tutor, say, { lab: values.lab })
+  } catch (error) {
+    console.error(`edrys-dev: ${(error as Error).message}`)
+    process.exit(1)
+  }
   process.exit(0)
+}
+if (values.lab) {
+  console.error(`edrys-dev: --lab is for init; to start a lab, give its file: edrys-dev ${values.lab}`)
+  process.exit(1)
 }
 
 const lab = path.resolve(values.input ?? positionals[0] ?? 'lab.yml')

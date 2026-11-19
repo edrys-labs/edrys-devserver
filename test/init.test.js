@@ -78,6 +78,106 @@ test('init keeps files that are there and adds to .gitignore once', () => {
   assert.equal(fs.readFileSync(path.join(lab, '.gitignore'), 'utf8'), 'node_modules\n.edrys-dev/\n')
 })
 
+// a published lab repository, like edrys-labs/lab-web-serial
+const repo = (name) => {
+  const folder = path.join(dir, name)
+  fs.mkdirSync(path.join(folder, 'laboratory'), { recursive: true })
+  fs.writeFileSync(path.join(folder, 'laboratory', 'micropython.yaml'), 'name: Lab - WebSerial\nmodules:\n  - url: x\n')
+  // no labs: no modules list, and a folder skipped
+  fs.writeFileSync(path.join(folder, 'package.json'), '{"name": "x"}')
+  fs.mkdirSync(path.join(folder, 'modules', 'm'), { recursive: true })
+  fs.writeFileSync(path.join(folder, 'modules', 'm', 'module.yml'), 'modules: []\n')
+  return folder
+}
+
+test('init finds the lab of a lab repository and sets it up, without a starter lab', () => {
+  const lab = repo('found')
+  const out = init(lab)
+  const read = (file) => fs.readFileSync(path.join(lab, file), 'utf8')
+
+  assert.equal(fs.existsSync(path.join(lab, 'lab.yml')), false)
+  assert.match(out, /found {4}laboratory\/micropython\.yaml, using it/)
+  const args = ['-y', '@edryslabs/edrys-dev', '--mcp', 'laboratory/micropython.yaml']
+  assert.deepEqual(JSON.parse(read('.mcp.json')).mcpServers.edrys.args, args)
+  assert.deepEqual(JSON.parse(read('.vscode/mcp.json')).servers.edrys.args, args)
+  assert.deepEqual(JSON.parse(read('.claude/settings.json')).permissions.allow, [
+    'mcp__edrys',
+    'Edit(/laboratory/micropython.yaml)',
+    'Edit(/laboratory/modules/**)',
+  ])
+  // named after the lab, not the folder
+  assert.match(read('AGENTS.md'), /^# Lab - WebSerial\n\nThis folder is an edrys-Lite lab: `laboratory\/micropython\.yaml`/)
+  assert.match(out, /The agent works on laboratory\/micropython\.yaml/)
+})
+
+test('init --lab picks the lab, relative to the current folder', () => {
+  const lab = repo('given')
+  fs.writeFileSync(path.join(lab, 'laboratory', 'arduino.json'), '{"name": "Arduino", "modules": []}')
+  // two labs: init does not guess
+  assert.throws(() => init(lab), (error) => /more than one lab:\n {2}1\. laboratory\/arduino\.json\n {2}2\. laboratory\/micropython\.yaml\n/.test(error.stderr))
+  assert.equal(fs.existsSync(path.join(lab, '.mcp.json')), false)
+
+  init(lab, '--lab', path.join(lab, 'laboratory', 'arduino.json'))
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(lab, '.mcp.json'), 'utf8')).mcpServers.edrys.args.at(-1), 'laboratory/arduino.json')
+
+  for (const [file, message] of [
+    ['missing.yml', /no lab file at/],
+    ['package.json', /is not an edrys lab/],
+    [path.join(dir, 'outside.yml'), /must be in the folder/],
+  ]) {
+    if (file.includes('outside')) fs.writeFileSync(file, 'modules: []\n')
+    assert.throws(() => init(lab, '--lab', path.resolve(lab, file)), (error) => message.test(error.stderr))
+  }
+})
+
+test('init adds the edrys parts to agent files that are there', () => {
+  const lab = repo('merged')
+  const write = (file, text) => {
+    fs.mkdirSync(path.dirname(path.join(lab, file)), { recursive: true })
+    fs.writeFileSync(path.join(lab, file), text)
+  }
+  const read = (file) => fs.readFileSync(path.join(lab, file), 'utf8')
+  write('.mcp.json', JSON.stringify({ mcpServers: { other: { command: 'other' } } }))
+  write('.vscode/mcp.json', '{\n  // comments: not touched\n  "servers": {}\n}\n')
+  write('AGENTS.md', '# My repo\n\nRun the tests.')
+  write('CLAUDE.md', 'Be brief.\n')
+  write('.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(ls)'], deny: ['Bash(rm)'] } }))
+
+  const out = init(lab)
+  const mcp = JSON.parse(read('.mcp.json')).mcpServers
+  assert.deepEqual(mcp.other, { command: 'other' })
+  assert.equal(mcp.edrys.args.at(-1), 'laboratory/micropython.yaml')
+  assert.match(out, /changed {2}\.mcp\.json: added the edrys server/)
+  assert.equal(read('.vscode/mcp.json'), '{\n  // comments: not touched\n  "servers": {}\n}\n')
+  assert.match(out, /kept {5}\.vscode\/mcp\.json \(already there\): add the edrys server yourself/)
+  assert.match(read('AGENTS.md'), /^# My repo\n\nRun the tests\.\n\n## edrys-Lite lab\n\nThis folder is an edrys-Lite lab: `laboratory\/micropython\.yaml`/)
+  assert.equal(read('CLAUDE.md'), 'Be brief.\n\n@AGENTS.md\n')
+  assert.deepEqual(JSON.parse(read('.claude/settings.json')), {
+    permissions: {
+      allow: ['Bash(ls)', 'mcp__edrys', 'Edit(/laboratory/micropython.yaml)', 'Edit(/laboratory/modules/**)'],
+      deny: ['Bash(rm)'],
+    },
+    enabledMcpjsonServers: ['edrys'],
+  })
+
+  // a second run changes nothing
+  const before = ['.mcp.json', 'AGENTS.md', 'CLAUDE.md', '.claude/settings.json'].map(read)
+  assert.doesNotMatch(init(lab), /changed/)
+  assert.deepEqual(['.mcp.json', 'AGENTS.md', 'CLAUDE.md', '.claude/settings.json'].map(read), before)
+})
+
+test('init points out an edrys server that starts another lab', () => {
+  const lab = repo('elsewhere')
+  fs.writeFileSync(path.join(lab, '.mcp.json'), JSON.stringify({ mcpServers: { edrys: { command: 'npx', args: ['--mcp', 'lab.yml'] } } }))
+  assert.match(init(lab), /kept {5}\.mcp\.json \(already there\): its edrys server starts another lab, put "laboratory\/micropython\.yaml" into its args/)
+})
+
+test('--lab without init is an error', () => {
+  const run = spawnSync(process.execPath, ['dist/index.js', '--lab', 'x.yml'])
+  assert.equal(run.status, 1)
+  assert.match(run.stderr.toString(), /--lab is for init/)
+})
+
 test('--mcp starts in a folder without a lab, with the starter lab', { timeout: 10000 }, async () => {
   const empty = path.join(dir, 'empty')
   fs.mkdirSync(empty)

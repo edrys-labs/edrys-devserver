@@ -104,7 +104,7 @@ The quick way, for a new lab:
 npx @edryslabs/edrys-dev init my-lab
 ```
 
-This makes the folder `my-lab` with a starter `lab.yml`, the agent configuration for Claude Code (`.mcp.json`) and VS Code Copilot (`.vscode/mcp.json`), instructions for the agent (`AGENTS.md`, `CLAUDE.md`), Claude Code settings that let the agent use edrys-dev and edit `lab.yml` and `modules/` without asking each time (`.claude/settings.json`), and a `.gitignore`. In a folder that already has some of these files, it keeps them. If the edrys skills (step 2 below) are not installed yet, it offers to install them for you; if they are, it updates them when a newer version is out. Then open the folder in your agent and write "start".
+This makes the folder `my-lab` with a starter `lab.yml`, the agent configuration for Claude Code (`.mcp.json`) and VS Code Copilot (`.vscode/mcp.json`), instructions for the agent (`AGENTS.md`, `CLAUDE.md`), Claude Code settings that let the agent use edrys-dev and edit `lab.yml` and `modules/` without asking each time (`.claude/settings.json`), and a `.gitignore`. If the edrys skills (step 2 below) are not installed yet, it offers to install them for you; if they are, it updates them when a newer version is out. Then open the folder in your agent and write "start".
 
 To give your students a [tutor](#a-tutor-for-your-students) as well:
 
@@ -113,6 +113,25 @@ npx @edryslabs/edrys-dev init my-lab --tutor
 ```
 
 The agent then starts edrys-dev with the tutor. The tutor needs Claude Code on your computer, also if you work with Copilot. Add `--tutor-agent codex` to have Codex answer instead of Claude Code. In a folder that already has its agent configuration, add `"--tutor"` to the `args` in `.mcp.json` (and `.vscode/mcp.json`) yourself, then restart the agent.
+
+#### A lab you already have
+
+Run `init` in the lab's folder, for example a lab repository you cloned:
+
+```bash
+cd lab-web-serial
+npx @edryslabs/edrys-dev init .
+```
+
+`init` looks for the lab in the folder and two levels of folders below it (a YAML or JSON file with a list of `modules`), e.g. `laboratory/micropython.yaml`, and sets the agent up for that file. It creates no starter lab, and the lab keeps its name and place, so deploy links and import addresses that point to it keep working. If the folder has more than one lab, it asks which one, or name it yourself:
+
+```bash
+npx @edryslabs/edrys-dev init . --lab laboratory/micropython.yaml
+```
+
+Files that are there are kept. `init` adds only the edrys parts: the `edrys` server to `.mcp.json`, a section to `AGENTS.md`, `@AGENTS.md` to `CLAUDE.md`, and the permissions to `.claude/settings.json`. A file it can't change safely, such as a VS Code `mcp.json` with comments, stays as it is, and `init` tells you what to add. Commit these files or not, as you like: they don't change the lab.
+
+A class you made only on https://edrys-labs.github.io has no file yet. Download it in the class under Settings → Import / Export (YAML file), put the file into a folder, run `init` there, and give students the new link: edrys-dev opens it as a new class.
 
 By hand:
 
