@@ -172,6 +172,15 @@ test('init points out an edrys server that starts another lab', () => {
   assert.match(init(lab), /kept {5}\.mcp\.json \(already there\): its edrys server starts another lab, put "laboratory\/micropython\.yaml" into its args/)
 })
 
+test('-v shows the versions of edrys-dev and its edrys-Lite', () => {
+  const own = JSON.parse(fs.readFileSync('package.json', 'utf8')).version
+  for (const flag of ['-v', '--version']) {
+    const run = spawnSync(process.execPath, ['dist/index.js', flag])
+    assert.equal(run.status, 0)
+    assert.match(run.stdout.toString(), new RegExp(`^edrys-dev ${own.replaceAll('.', '\\.')} \\(edrys-Lite \\d+\\.\\d+\\.\\d+[^)]*\\)\\n$`))
+  }
+})
+
 test('--lab without init is an error', () => {
   const run = spawnSync(process.execPath, ['dist/index.js', '--lab', 'x.yml'])
   assert.equal(run.status, 1)

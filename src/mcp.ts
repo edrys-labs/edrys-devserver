@@ -15,7 +15,7 @@ import { readSaved } from './watch.js'
 // never answer 2026-07-28, see above
 const VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 
-const VERSION: string = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
+export const VERSION: string = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 // Claude Code cuts this text and every tool description at 2048 characters.
 const INSTRUCTIONS = `edrys-dev serves an edrys-Lite lab (a classroom configuration, YAML or JSON, at get_state.lab) in the user's browser. The tab at get_state.url owns the class and republishes it whenever the lab file changes: edit the file with your own file tools, never ask the user to reload. Students join through get_state.student_link.

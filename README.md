@@ -224,6 +224,8 @@ edrys-dev [lab.yml] [options]
 | `--tutor-per-hour <n>` | `200` | questions the tutor answers per hour for the whole class |
 | `--host <host>` | `127.0.0.1` | `0.0.0.0` lets others on your network open the class (and, with `--mcp`, write to your agent) |
 | `--mcp` | off | for AI agents; set it in `.mcp.json`, see above |
+| `--lab <file>` | the lab `init` finds | with `init`: the lab that is already in the folder, see [A lab you already have](#a-lab-you-already-have) |
+| `-v, --version` | | show the version of edrys-dev and of the edrys-Lite it serves |
 | `-h, --help` | | show help |
 
 ## Troubleshooting

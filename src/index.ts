@@ -3,8 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parseArgs } from 'node:util'
 import open from 'open'
-import { startDevServer, type Report } from './server.js'
-import { startMcp, studentLink, localUrls } from './mcp.js'
+import { startDevServer, edrysDist, type Report } from './server.js'
+import { startMcp, studentLink, localUrls, VERSION } from './mcp.js'
 import { reachable } from './origin.js'
 import { readSaved } from './watch.js'
 import { CLASS_PER_HOUR, TUTOR_AGENTS, tutorAuth, type TutorAgent } from './tutor.js'
@@ -48,6 +48,7 @@ Usage: edrys-dev [lab.yml] [options]
   -o, --open          open the lab in the browser
       --mcp           serve an AI agent over stdio (MCP); started by the
                       agent from its MCP config, not by hand
+  -v, --version       show the version of edrys-dev and its edrys-Lite
   -h, --help          show this help
 
 The tab opened at /?dev owns the class and republishes it whenever the lab
@@ -71,6 +72,7 @@ const { values, positionals } = parseArgs({
     open: { type: 'boolean', short: 'o', default: false },
     mcp: { type: 'boolean', default: false },
     help: { type: 'boolean', short: 'h', default: false },
+    version: { type: 'boolean', short: 'v', default: false },
   },
 })
 
@@ -79,6 +81,15 @@ const say = values.mcp ? console.error : console.log
 
 if (values.help) {
   say(HELP)
+  process.exit(0)
+}
+
+if (values.version) {
+  let lite = 'unknown'
+  try {
+    lite = JSON.parse(fs.readFileSync(path.join(edrysDist(), '..', 'package.json'), 'utf8')).version
+  } catch {}
+  say(`edrys-dev ${VERSION} (edrys-Lite ${lite})`)
   process.exit(0)
 }
 
